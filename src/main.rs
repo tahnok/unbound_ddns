@@ -166,13 +166,16 @@ async fn update_handler(
         }
     };
 
-    // Authenticate the request
+    // Authenticate the request - use same error message for both invalid domain and invalid key
+    // to prevent leaking information about which domains are valid
+    const UNAUTHORIZED_ERROR: &str = "Unauthorized";
+
     let domain_config = match config.find_domain(&payload.domain) {
         Some(d) => d,
         None => {
             return UpdateResponse {
                 success: false,
-                message: format!("Domain '{}' is not authorized", payload.domain),
+                message: UNAUTHORIZED_ERROR.to_string(),
             };
         }
     };
@@ -180,7 +183,7 @@ async fn update_handler(
     if domain_config.key != auth_key {
         return UpdateResponse {
             success: false,
-            message: "Invalid authentication key".to_string(),
+            message: UNAUTHORIZED_ERROR.to_string(),
         };
     }
 
@@ -562,7 +565,7 @@ key = "secret-key-2"
             .await
             .unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
-        assert!(body_str.contains("not authorized"));
+        assert!(body_str.contains("Unauthorized"));
     }
 
     #[tokio::test]
@@ -601,7 +604,7 @@ key = "secret-key-2"
             .await
             .unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
-        assert!(body_str.contains("Invalid authentication key"));
+        assert!(body_str.contains("Unauthorized"));
     }
 
     #[tokio::test]
