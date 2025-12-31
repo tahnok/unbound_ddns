@@ -338,8 +338,8 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     // ============================================================================
     // TEST HELPERS
@@ -379,7 +379,8 @@ mod tests {
         domains: Option<&[(&str, &str)]>,
     ) -> Config {
         Config {
-            unbound_config_path: unbound_config_path.unwrap_or_else(|| PathBuf::from("/tmp/test.conf")),
+            unbound_config_path: unbound_config_path
+                .unwrap_or_else(|| PathBuf::from("/tmp/test.conf")),
             domains: domains
                 .map(|d| {
                     d.iter()
@@ -494,7 +495,11 @@ key = "secret-key-2"
         let unbound_file = create_unbound_config(None);
 
         // Try to update non-existent domain - should fail
-        let result = update_unbound_config(&unbound_file.path().to_path_buf(), "test.example.com", "192.168.1.1");
+        let result = update_unbound_config(
+            &unbound_file.path().to_path_buf(),
+            "test.example.com",
+            "192.168.1.1",
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found in Unbound config"));
     }
@@ -504,7 +509,12 @@ key = "secret-key-2"
         let unbound_file = create_unbound_config(Some(&[("test.example.com", "192.168.1.1")]));
 
         // Update existing entry
-        update_unbound_config(&unbound_file.path().to_path_buf(), "test.example.com", "10.0.0.1").unwrap();
+        update_unbound_config(
+            &unbound_file.path().to_path_buf(),
+            "test.example.com",
+            "10.0.0.1",
+        )
+        .unwrap();
 
         // Verify
         let content = fs::read_to_string(unbound_file.path()).unwrap();
