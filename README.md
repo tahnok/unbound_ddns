@@ -22,8 +22,10 @@ Clients make HTTP requests to the server (typically using `curl` from a cron job
 
 **Endpoint:** `POST /update`
 
+**Headers:**
+- `Authorization` (required) - Authentication key in the format `Bearer <key>` or just `<key>`
+
 **Parameters:**
-- `key` (required) - Authentication secret key
 - `domain` (required) - The domain name to update
 - `ip` (optional) - The new IP address. If omitted, the server will use the client's IP address from the request
 
@@ -34,13 +36,13 @@ Clients make HTTP requests to the server (typically using `curl` from a cron job
 ```bash
 # Update with explicit IP
 curl -X POST https://your-server.com/update \
-  -d "key=your-secret-key" \
+  -H "Authorization: Bearer your-secret-key" \
   -d "domain=home.example.com" \
   -d "ip=203.0.113.42"
 
 # Update using client's IP (auto-detected)
 curl -X POST https://your-server.com/update \
-  -d "key=your-secret-key" \
+  -H "Authorization: Bearer your-secret-key" \
   -d "domain=home.example.com"
 ```
 
@@ -49,13 +51,15 @@ curl -X POST https://your-server.com/update \
 ```bash
 # Update with explicit IP
 curl -X POST https://your-server.com/update \
+  -H "Authorization: Bearer your-secret-key" \
   -H "Content-Type: application/json" \
-  -d '{"key":"your-secret-key","domain":"home.example.com","ip":"203.0.113.42"}'
+  -d '{"domain":"home.example.com","ip":"203.0.113.42"}'
 
 # Update using client's IP (auto-detected)
 curl -X POST https://your-server.com/update \
+  -H "Authorization: Bearer your-secret-key" \
   -H "Content-Type: application/json" \
-  -d '{"key":"your-secret-key","domain":"home.example.com"}'
+  -d '{"domain":"home.example.com"}'
 ```
 
 ## Setup

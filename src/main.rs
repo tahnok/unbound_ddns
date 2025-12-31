@@ -93,7 +93,6 @@ impl Config {
 
 #[derive(Debug, Deserialize)]
 struct UpdateRequest {
-    key: String,
     domain: String,
     ip: Option<String>,
 }
@@ -116,12 +115,46 @@ impl IntoResponse for UpdateResponse {
     }
 }
 
+fn extract_auth_key(headers: &HeaderMap) -> Result<String, String> {
+    let auth_header = headers
+        .get("authorization")
+        .ok_or_else(|| "Missing Authorization header".to_string())?;
+
+    let auth_str = auth_header
+        .to_str()
+        .map_err(|_| "Invalid Authorization header encoding".to_string())?;
+
+    // Support both "Bearer <key>" and just "<key>" formats
+    let key = if let Some(bearer_key) = auth_str.strip_prefix("Bearer ") {
+        bearer_key.to_string()
+    } else {
+        auth_str.to_string()
+    };
+
+    if key.trim().is_empty() {
+        return Err("Authorization header cannot be empty".to_string());
+    }
+
+    Ok(key)
+}
+
 async fn update_handler(
     State(config): State<Arc<Config>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     headers: HeaderMap,
     body: Bytes,
 ) -> UpdateResponse {
+    // Extract and validate Authorization header
+    let auth_key = match extract_auth_key(&headers) {
+        Ok(key) => key,
+        Err(e) => {
+            return UpdateResponse {
+                success: false,
+                message: e,
+            };
+        }
+    };
+
     // Parse the request based on Content-Type
     let payload = match parse_update_request(&headers, &body) {
         Ok(p) => p,
@@ -144,7 +177,7 @@ async fn update_handler(
         }
     };
 
-    if domain_config.key != payload.key {
+    if domain_config.key != auth_key {
         return UpdateResponse {
             success: false,
             message: "Invalid authentication key".to_string(),
@@ -515,10 +548,11 @@ key = "secret-key-2"
             .method("POST")
             .uri("/update")
             .header("content-type", "application/x-www-form-urlencoded")
+            .header("authorization", "Bearer secret123")
             .extension(ConnectInfo(
                 "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
             ))
-            .body(Body::from("key=secret123&domain=notallowed.example.com"))
+            .body(Body::from("domain=notallowed.example.com"))
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
@@ -553,12 +587,11 @@ key = "secret-key-2"
             .method("POST")
             .uri("/update")
             .header("content-type", "application/x-www-form-urlencoded")
+            .header("authorization", "Bearer wrong-key")
             .extension(ConnectInfo(
                 "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
             ))
-            .body(Body::from(
-                "key=wrong-key&domain=test.example.com&ip=10.0.0.1",
-            ))
+            .body(Body::from("domain=test.example.com&ip=10.0.0.1"))
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
@@ -603,12 +636,11 @@ key = "secret-key-2"
             .method("POST")
             .uri("/update")
             .header("content-type", "application/x-www-form-urlencoded")
+            .header("authorization", "Bearer test-key")
             .extension(ConnectInfo(
                 "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
             ))
-            .body(Body::from(
-                "key=test-key&domain=test.example.com&ip=203.0.113.42",
-            ))
+            .body(Body::from("domain=test.example.com&ip=203.0.113.42"))
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
@@ -669,10 +701,11 @@ key = "secret-key-2"
             .method("POST")
             .uri("/update")
             .header("content-type", "application/x-www-form-urlencoded")
+            .header("authorization", "Bearer auto-key")
             .extension(ConnectInfo(
                 "198.51.100.42:54321".parse::<SocketAddr>().unwrap(),
             ))
-            .body(Body::from("key=auto-key&domain=auto.example.com"))
+            .body(Body::from("domain=auto.example.com"))
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
@@ -727,12 +760,13 @@ key = "secret-key-2"
             .route("/update", post(update_handler))
             .with_state(config);
 
-        let json_body = r#"{"key":"json-key","domain":"json.example.com","ip":"203.0.113.100"}"#;
+        let json_body = r#"{"domain":"json.example.com","ip":"203.0.113.100"}"#;
 
         let request = Request::builder()
             .method("POST")
             .uri("/update")
             .header("content-type", "application/json")
+            .header("authorization", "Bearer json-key")
             .extension(ConnectInfo(
                 "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
             ))
@@ -791,12 +825,13 @@ key = "secret-key-2"
             .route("/update", post(update_handler))
             .with_state(config);
 
-        let json_body = r#"{"key":"autoip-key","domain":"autoip.example.com"}"#;
+        let json_body = r#"{"domain":"autoip.example.com"}"#;
 
         let request = Request::builder()
             .method("POST")
             .uri("/update")
             .header("content-type", "application/json")
+            .header("authorization", "Bearer autoip-key")
             .extension(ConnectInfo(
                 "198.51.100.99:54321".parse::<SocketAddr>().unwrap(),
             ))
