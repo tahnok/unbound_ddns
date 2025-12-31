@@ -384,4 +384,211 @@ key = "secret-key-2"
         // Cleanup
         fs::remove_file(&config_path).unwrap();
     }
+
+    // ============================================================================
+    // INTEGRATION TESTS - DO NOT REMOVE
+    // These tests verify the actual HTTP endpoint behavior with form data
+    // ============================================================================
+
+    #[tokio::test]
+    async fn test_update_endpoint_unauthorized_domain() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let config = Arc::new(Config {
+            unbound_config_path: PathBuf::from("/tmp/test.conf"),
+            domains: vec![DomainConfig {
+                name: "allowed.example.com".to_string(),
+                key: "secret123".to_string(),
+            }],
+        });
+
+        let app = Router::new()
+            .route("/update", post(update_handler))
+            .with_state(config);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/update")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .extension(ConnectInfo(
+                "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+            ))
+            .body(Body::from("key=secret123&domain=notallowed.example.com"))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("not authorized"));
+    }
+
+    #[tokio::test]
+    async fn test_update_endpoint_invalid_key() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let config = Arc::new(Config {
+            unbound_config_path: PathBuf::from("/tmp/test.conf"),
+            domains: vec![DomainConfig {
+                name: "test.example.com".to_string(),
+                key: "correct-key".to_string(),
+            }],
+        });
+
+        let app = Router::new()
+            .route("/update", post(update_handler))
+            .with_state(config);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/update")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .extension(ConnectInfo(
+                "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+            ))
+            .body(Body::from("key=wrong-key&domain=test.example.com&ip=10.0.0.1"))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("Invalid authentication key"));
+    }
+
+    #[tokio::test]
+    async fn test_update_endpoint_with_explicit_ip() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use std::io::Write;
+        use tower::ServiceExt;
+
+        // Create temp config file
+        let temp_dir = std::env::temp_dir();
+        let config_path = temp_dir.join("test_integration.conf");
+        let mut file = fs::File::create(&config_path).unwrap();
+        writeln!(file, "server:").unwrap();
+        writeln!(file, "  verbosity: 1").unwrap();
+        drop(file);
+
+        let config = Arc::new(Config {
+            unbound_config_path: config_path.clone(),
+            domains: vec![DomainConfig {
+                name: "test.example.com".to_string(),
+                key: "test-key".to_string(),
+            }],
+        });
+
+        let app = Router::new()
+            .route("/update", post(update_handler))
+            .with_state(config);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/update")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .extension(ConnectInfo(
+                "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+            ))
+            .body(Body::from(
+                "key=test-key&domain=test.example.com&ip=203.0.113.42",
+            ))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        // Note: This will fail to reload unbound, but that's expected in test
+        // We're mainly testing the request parsing and validation
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Either succeeds or fails on unbound-control (expected in test environment)
+        assert!(
+            status == StatusCode::OK || body_str.contains("Failed to reload Unbound"),
+            "Unexpected response: {} - {}",
+            status,
+            body_str
+        );
+
+        // Verify config was updated
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("local-data: \"test.example.com IN A 203.0.113.42\""));
+
+        // Cleanup
+        fs::remove_file(&config_path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_update_endpoint_auto_detect_ip() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use std::io::Write;
+        use tower::ServiceExt;
+
+        // Create temp config file
+        let temp_dir = std::env::temp_dir();
+        let config_path = temp_dir.join("test_integration_autoip.conf");
+        let mut file = fs::File::create(&config_path).unwrap();
+        writeln!(file, "server:").unwrap();
+        writeln!(file, "  verbosity: 1").unwrap();
+        drop(file);
+
+        let config = Arc::new(Config {
+            unbound_config_path: config_path.clone(),
+            domains: vec![DomainConfig {
+                name: "auto.example.com".to_string(),
+                key: "auto-key".to_string(),
+            }],
+        });
+
+        let app = Router::new()
+            .route("/update", post(update_handler))
+            .with_state(config);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/update")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .extension(ConnectInfo(
+                "198.51.100.42:54321".parse::<SocketAddr>().unwrap(),
+            ))
+            .body(Body::from("key=auto-key&domain=auto.example.com"))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Either succeeds or fails on unbound-control (expected in test environment)
+        assert!(
+            status == StatusCode::OK || body_str.contains("Failed to reload Unbound"),
+            "Unexpected response: {} - {}",
+            status,
+            body_str
+        );
+
+        // Verify config was updated with client IP
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("local-data: \"auto.example.com IN A 198.51.100.42\""));
+
+        // Cleanup
+        fs::remove_file(&config_path).unwrap();
+    }
 }
