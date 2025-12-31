@@ -10,3 +10,13 @@ Before committing code, always run:
 4. **Build**: `cargo build` - Verify the project compiles
 
 This helps catch issues early and maintains code quality.
+
+## Testing Guidelines
+
+Maintain comprehensive test coverage:
+
+- **Unit Tests**: Test individual functions in isolation
+- **Integration Tests**: Test HTTP endpoints through the web framework
+- **Edge Cases**: Test error conditions, invalid inputs, and boundary cases
+
+Aim for high coverage across all code paths. Tests should verify both success and failure scenarios.
