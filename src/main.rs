@@ -13,6 +13,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 
 #[derive(Debug, Deserialize, Clone)]
 struct Config {
@@ -180,7 +181,9 @@ async fn update_handler(
         }
     };
 
-    if domain_config.key != auth_key {
+    // Use constant-time comparison to prevent timing attacks
+    // that could be used to guess the key byte-by-byte
+    if !bool::from(domain_config.key.as_bytes().ct_eq(auth_key.as_bytes())) {
         return UpdateResponse {
             success: false,
             message: UNAUTHORIZED_ERROR.to_string(),
