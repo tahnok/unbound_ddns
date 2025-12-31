@@ -139,6 +139,48 @@ fn extract_auth_key(headers: &HeaderMap) -> Result<String, String> {
     Ok(key)
 }
 
+/// Extracts the real client IP address from the request headers when running behind a proxy.
+///
+/// This function checks for common proxy headers in the following order:
+/// 1. X-Forwarded-For: Takes the leftmost (original client) IP from the comma-separated list
+/// 2. X-Real-IP: The direct client IP set by the proxy
+/// 3. Falls back to the direct connection IP if no proxy headers are present
+///
+/// # Arguments
+/// * `headers` - The HTTP request headers
+/// * `addr` - The socket address of the direct connection
+///
+/// # Returns
+/// The client IP address as a string
+fn extract_client_ip(headers: &HeaderMap, addr: &SocketAddr) -> String {
+    // Check X-Forwarded-For header first (most common)
+    // Format: "client, proxy1, proxy2" - we want the leftmost (client) IP
+    if let Some(forwarded_for) = headers.get("x-forwarded-for") {
+        if let Ok(forwarded_str) = forwarded_for.to_str() {
+            // Take the first IP in the comma-separated list
+            if let Some(client_ip) = forwarded_str.split(',').next() {
+                let ip = client_ip.trim();
+                if !ip.is_empty() {
+                    return ip.to_string();
+                }
+            }
+        }
+    }
+
+    // Check X-Real-IP header (used by nginx and others)
+    if let Some(real_ip) = headers.get("x-real-ip") {
+        if let Ok(ip_str) = real_ip.to_str() {
+            let ip = ip_str.trim();
+            if !ip.is_empty() {
+                return ip.to_string();
+            }
+        }
+    }
+
+    // Fall back to the direct connection IP
+    addr.ip().to_string()
+}
+
 async fn update_handler(
     State(config): State<Arc<Config>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -193,7 +235,7 @@ async fn update_handler(
     // Determine the IP address
     let ip = match payload.ip {
         Some(ip) => ip,
-        None => addr.ip().to_string(),
+        None => extract_client_ip(&headers, &addr),
     };
 
     // Update the Unbound configuration
@@ -1015,5 +1057,183 @@ key = "test-key"
 
         // Just ensure it doesn't panic - we can't easily test stdout
         print_config_info(&config);
+    }
+
+    #[test]
+    fn test_extract_client_ip_from_x_forwarded_for_single() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "203.0.113.1".parse().unwrap());
+        let addr: SocketAddr = "192.168.1.1:12345".parse().unwrap();
+
+        let ip = extract_client_ip(&headers, &addr);
+        assert_eq!(ip, "203.0.113.1");
+    }
+
+    #[test]
+    fn test_extract_client_ip_from_x_forwarded_for_multiple() {
+        let mut headers = HeaderMap::new();
+        // Client IP is the leftmost one
+        headers.insert(
+            "x-forwarded-for",
+            "203.0.113.1, 198.51.100.1, 192.0.2.1".parse().unwrap(),
+        );
+        let addr: SocketAddr = "192.168.1.1:12345".parse().unwrap();
+
+        let ip = extract_client_ip(&headers, &addr);
+        assert_eq!(ip, "203.0.113.1");
+    }
+
+    #[test]
+    fn test_extract_client_ip_from_x_real_ip() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "203.0.113.42".parse().unwrap());
+        let addr: SocketAddr = "192.168.1.1:12345".parse().unwrap();
+
+        let ip = extract_client_ip(&headers, &addr);
+        assert_eq!(ip, "203.0.113.42");
+    }
+
+    #[test]
+    fn test_extract_client_ip_x_forwarded_for_takes_precedence() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "203.0.113.1".parse().unwrap());
+        headers.insert("x-real-ip", "203.0.113.2".parse().unwrap());
+        let addr: SocketAddr = "192.168.1.1:12345".parse().unwrap();
+
+        let ip = extract_client_ip(&headers, &addr);
+        // X-Forwarded-For should take precedence
+        assert_eq!(ip, "203.0.113.1");
+    }
+
+    #[test]
+    fn test_extract_client_ip_fallback_to_connection() {
+        let headers = HeaderMap::new();
+        let addr: SocketAddr = "198.51.100.99:54321".parse().unwrap();
+
+        let ip = extract_client_ip(&headers, &addr);
+        assert_eq!(ip, "198.51.100.99");
+    }
+
+    #[test]
+    fn test_extract_client_ip_empty_x_forwarded_for() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "".parse().unwrap());
+        let addr: SocketAddr = "198.51.100.99:54321".parse().unwrap();
+
+        let ip = extract_client_ip(&headers, &addr);
+        // Should fall back to connection IP
+        assert_eq!(ip, "198.51.100.99");
+    }
+
+    #[test]
+    fn test_extract_client_ip_with_spaces() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-forwarded-for", "  203.0.113.1  ".parse().unwrap());
+        let addr: SocketAddr = "192.168.1.1:12345".parse().unwrap();
+
+        let ip = extract_client_ip(&headers, &addr);
+        // Should trim whitespace
+        assert_eq!(ip, "203.0.113.1");
+    }
+
+    #[tokio::test]
+    async fn test_update_endpoint_with_x_forwarded_for() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let unbound_file = create_unbound_config(Some(&[("proxy.example.com", "192.168.1.1")]));
+
+        let config = Arc::new(create_test_config(
+            Some(unbound_file.path().to_path_buf()),
+            Some(&[("proxy.example.com", "proxy-key")]),
+        ));
+
+        let app = Router::new()
+            .route("/update", post(update_handler))
+            .with_state(config);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/update")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer proxy-key")
+            .header("x-forwarded-for", "203.0.113.50")
+            .extension(ConnectInfo(
+                "192.168.1.100:12345".parse::<SocketAddr>().unwrap(),
+            ))
+            .body(Body::from(r#"{"domain":"proxy.example.com"}"#))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Either succeeds or fails on unbound-control (expected in test environment)
+        assert!(
+            status == StatusCode::OK || body_str.contains("Failed to reload Unbound"),
+            "Unexpected response: {} - {}",
+            status,
+            body_str
+        );
+
+        // Verify config was updated with the IP from X-Forwarded-For, not the connection IP
+        let content = fs::read_to_string(unbound_file.path()).unwrap();
+        assert!(content.contains("local-data: \"proxy.example.com IN A 203.0.113.50\""));
+        assert!(!content.contains("192.168.1.100")); // Should NOT use the proxy IP
+    }
+
+    #[tokio::test]
+    async fn test_update_endpoint_with_x_real_ip() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let unbound_file = create_unbound_config(Some(&[("realip.example.com", "192.168.1.1")]));
+
+        let config = Arc::new(create_test_config(
+            Some(unbound_file.path().to_path_buf()),
+            Some(&[("realip.example.com", "realip-key")]),
+        ));
+
+        let app = Router::new()
+            .route("/update", post(update_handler))
+            .with_state(config);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/update")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer realip-key")
+            .header("x-real-ip", "203.0.113.75")
+            .extension(ConnectInfo(
+                "192.168.1.100:12345".parse::<SocketAddr>().unwrap(),
+            ))
+            .body(Body::from(r#"{"domain":"realip.example.com"}"#))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Either succeeds or fails on unbound-control (expected in test environment)
+        assert!(
+            status == StatusCode::OK || body_str.contains("Failed to reload Unbound"),
+            "Unexpected response: {} - {}",
+            status,
+            body_str
+        );
+
+        // Verify config was updated with the IP from X-Real-IP
+        let content = fs::read_to_string(unbound_file.path()).unwrap();
+        assert!(content.contains("local-data: \"realip.example.com IN A 203.0.113.75\""));
     }
 }
