@@ -155,25 +155,25 @@ fn extract_auth_key(headers: &HeaderMap) -> Result<String, String> {
 fn extract_client_ip(headers: &HeaderMap, addr: &SocketAddr) -> String {
     // Check X-Forwarded-For header first (most common)
     // Format: "client, proxy1, proxy2" - we want the leftmost (client) IP
-    if let Some(forwarded_for) = headers.get("x-forwarded-for") {
-        if let Ok(forwarded_str) = forwarded_for.to_str() {
-            // Take the first IP in the comma-separated list
-            if let Some(client_ip) = forwarded_str.split(',').next() {
-                let ip = client_ip.trim();
-                if !ip.is_empty() {
-                    return ip.to_string();
-                }
+    if let Some(forwarded_for) = headers.get("x-forwarded-for")
+        && let Ok(forwarded_str) = forwarded_for.to_str()
+    {
+        // Take the first IP in the comma-separated list
+        if let Some(client_ip) = forwarded_str.split(',').next() {
+            let ip = client_ip.trim();
+            if !ip.is_empty() {
+                return ip.to_string();
             }
         }
     }
 
     // Check X-Real-IP header (used by nginx and others)
-    if let Some(real_ip) = headers.get("x-real-ip") {
-        if let Ok(ip_str) = real_ip.to_str() {
-            let ip = ip_str.trim();
-            if !ip.is_empty() {
-                return ip.to_string();
-            }
+    if let Some(real_ip) = headers.get("x-real-ip")
+        && let Ok(ip_str) = real_ip.to_str()
+    {
+        let ip = ip_str.trim();
+        if !ip.is_empty() {
+            return ip.to_string();
         }
     }
 
