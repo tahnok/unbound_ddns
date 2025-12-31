@@ -78,4 +78,4 @@ key = "secret-key-3"
 
 ## License
 
-_(Coming soon)_
+MIT
