@@ -62,9 +62,113 @@ curl -X POST https://your-server.com/update \
   -d '{"domain":"home.example.com"}'
 ```
 
-## Setup
+## Installation
 
-_(Coming soon)_
+### Building from Source
+
+1. **Install Rust** (if not already installed):
+   ```bash
+   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+   ```
+
+2. **Clone the repository**:
+   ```bash
+   git clone https://github.com/tahnok/unbound_ddns.git
+   cd unbound_ddns
+   ```
+
+3. **Build the release binary**:
+   ```bash
+   cargo build --release
+   ```
+
+4. **Install the binary**:
+   ```bash
+   sudo cp target/release/unbound_ddns /usr/local/bin/
+   sudo chmod +x /usr/local/bin/unbound_ddns
+   ```
+
+### Configuration Setup
+
+1. **Create a configuration file** at `/etc/unbound_ddns/config.toml`:
+   ```bash
+   sudo mkdir -p /etc/unbound_ddns
+   sudo nano /etc/unbound_ddns/config.toml
+   ```
+
+2. **Add your configuration** (see Configuration section below for details):
+
+   ```toml
+   # Path to the Unbound configuration file to update
+   unbound_config_path = "/etc/unbound/unbound.conf"
+
+   # Authorized domains and their secret keys
+   [[domains]]
+   name = "home.example.com"
+   key = "your-secret-key-here"
+
+   [[domains]]
+   name = "server.example.com"
+   key = "another-secret-key"
+   ```
+
+3. **Ensure proper permissions**:
+   ```bash
+   sudo chown root:root /etc/unbound_ddns/config.toml
+   sudo chmod 600 /etc/unbound_ddns/config.toml
+   ```
+
+### Systemd Service
+
+Create a systemd service to run unbound_ddns automatically.
+
+1. **Create the service file** at `/etc/systemd/system/unbound_ddns.service`:
+
+```ini
+[Unit]
+Description=Unbound Dynamic DNS Server
+After=network.target unbound.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/local/bin/unbound_ddns /etc/unbound_ddns/config.toml
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/etc/unbound
+
+# Allow binding to privileged ports if needed
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+```
+
+2. **Enable and start the service**:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl enable unbound_ddns
+   sudo systemctl start unbound_ddns
+   ```
+
+3. **Check the service status**:
+   ```bash
+   sudo systemctl status unbound_ddns
+   sudo journalctl -u unbound_ddns -f
+   ```
+
+**Note:** The service runs as root because it needs to:
+- Write to the Unbound configuration file
+- Reload the Unbound service
+
+For added security, consider using group permissions and allowing a dedicated user to modify the Unbound configuration instead.
 
 ## Configuration
 
