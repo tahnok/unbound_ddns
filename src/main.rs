@@ -285,6 +285,21 @@ fn reload_unbound() -> Result<(), String> {
     }
 }
 
+fn create_app(config: Arc<Config>) -> Router {
+    Router::new()
+        .route("/update", post(update_handler))
+        .with_state(config)
+}
+
+fn print_config_info(config: &Config) {
+    println!("Loaded configuration:");
+    println!("  Unbound config path: {:?}", config.unbound_config_path);
+    println!("  Authorized domains: {}", config.domains.len());
+    for domain in &config.domains {
+        println!("    - {}", domain.name);
+    }
+}
+
 #[tokio::main]
 async fn main() {
     // Load configuration
@@ -296,17 +311,10 @@ async fn main() {
         }
     };
 
-    println!("Loaded configuration:");
-    println!("  Unbound config path: {:?}", config.unbound_config_path);
-    println!("  Authorized domains: {}", config.domains.len());
-    for domain in &config.domains {
-        println!("    - {}", domain.name);
-    }
+    print_config_info(&config);
 
     // Build the router
-    let app = Router::new()
-        .route("/update", post(update_handler))
-        .with_state(config);
+    let app = create_app(config);
 
     // Start the server
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
@@ -860,5 +868,259 @@ key = "secret-key-2"
 
         // Cleanup
         fs::remove_file(&config_path).unwrap();
+    }
+
+    #[test]
+    fn test_config_load() {
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir();
+        let config_file = temp_dir.join("test_config_load.toml");
+        let unbound_config = temp_dir.join("test_config_load_unbound.conf");
+
+        // Create Unbound config with domain
+        let mut file = fs::File::create(&unbound_config).unwrap();
+        writeln!(file, "server:").unwrap();
+        writeln!(file, "local-data: \"example.com IN A 192.168.1.1\"").unwrap();
+        drop(file);
+
+        // Create config file
+        let config_content = format!(
+            r#"unbound_config_path = "{}"
+
+[[domains]]
+name = "example.com"
+key = "test-key"
+"#,
+            unbound_config.display()
+        );
+        fs::write(&config_file, config_content).unwrap();
+
+        // Test successful load
+        let result = Config::load(config_file.to_str().unwrap());
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        assert_eq!(config.domains.len(), 1);
+        assert_eq!(config.domains[0].name, "example.com");
+
+        // Cleanup
+        fs::remove_file(&config_file).unwrap();
+        fs::remove_file(&unbound_config).unwrap();
+    }
+
+    #[test]
+    fn test_config_load_file_not_found() {
+        let result = Config::load("/nonexistent/path/config.toml");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to read config file"));
+    }
+
+    #[test]
+    fn test_config_load_invalid_toml() {
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir();
+        let config_file = temp_dir.join("test_invalid_toml.toml");
+
+        let mut file = fs::File::create(&config_file).unwrap();
+        writeln!(file, "invalid toml {{{{").unwrap();
+        drop(file);
+
+        let result = Config::load(config_file.to_str().unwrap());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to parse config file"));
+
+        // Cleanup
+        fs::remove_file(&config_file).unwrap();
+    }
+
+    #[test]
+    fn test_extract_auth_key_with_bearer() {
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer my-secret-key".parse().unwrap());
+
+        let result = extract_auth_key(&headers);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "my-secret-key");
+    }
+
+    #[test]
+    fn test_extract_auth_key_without_bearer() {
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "my-secret-key".parse().unwrap());
+
+        let result = extract_auth_key(&headers);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "my-secret-key");
+    }
+
+    #[test]
+    fn test_extract_auth_key_missing() {
+        let headers = HeaderMap::new();
+        let result = extract_auth_key(&headers);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Missing Authorization header"));
+    }
+
+    #[test]
+    fn test_extract_auth_key_empty() {
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer ".parse().unwrap());
+
+        let result = extract_auth_key(&headers);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_update_response_success() {
+        let response = UpdateResponse {
+            success: true,
+            message: "Updated successfully".to_string(),
+        };
+        let axum_response = response.into_response();
+        assert_eq!(axum_response.status(), StatusCode::OK);
+    }
+
+    #[test]
+    fn test_update_response_failure() {
+        let response = UpdateResponse {
+            success: false,
+            message: "Update failed".to_string(),
+        };
+        let axum_response = response.into_response();
+        assert_eq!(axum_response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn test_parse_update_request_invalid_json() {
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", "application/json".parse().unwrap());
+        let body = Bytes::from("invalid json {{{");
+
+        let result = parse_update_request(&headers, &body);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid JSON"));
+    }
+
+    #[test]
+    fn test_parse_update_request_invalid_utf8() {
+        let headers = HeaderMap::new();
+        let body = Bytes::from(vec![0xFF, 0xFE, 0xFD]);
+
+        let result = parse_update_request(&headers, &body);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid UTF-8"));
+    }
+
+    #[tokio::test]
+    async fn test_update_endpoint_missing_auth_header() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let config = Arc::new(Config {
+            unbound_config_path: PathBuf::from("/tmp/test.conf"),
+            domains: vec![DomainConfig {
+                name: "test.example.com".to_string(),
+                key: "test-key".to_string(),
+            }],
+        });
+
+        let app = Router::new()
+            .route("/update", post(update_handler))
+            .with_state(config);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/update")
+            .header("content-type", "application/x-www-form-urlencoded")
+            .extension(ConnectInfo(
+                "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+            ))
+            .body(Body::from("domain=test.example.com"))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("Missing Authorization header"));
+    }
+
+    #[tokio::test]
+    async fn test_update_endpoint_invalid_json() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let config = Arc::new(Config {
+            unbound_config_path: PathBuf::from("/tmp/test.conf"),
+            domains: vec![DomainConfig {
+                name: "test.example.com".to_string(),
+                key: "test-key".to_string(),
+            }],
+        });
+
+        let app = Router::new()
+            .route("/update", post(update_handler))
+            .with_state(config);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/update")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer test-key")
+            .extension(ConnectInfo(
+                "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+            ))
+            .body(Body::from("invalid json {{{"))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("Failed to parse request"));
+    }
+
+    #[test]
+    fn test_create_app() {
+        let config = Arc::new(Config {
+            unbound_config_path: PathBuf::from("/tmp/test.conf"),
+            domains: vec![DomainConfig {
+                name: "test.example.com".to_string(),
+                key: "test-key".to_string(),
+            }],
+        });
+
+        let app = create_app(config);
+        // Just verify the router is created successfully
+        // The actual route testing is done in other tests
+        assert!(format!("{:?}", app).contains("Router"));
+    }
+
+    #[test]
+    fn test_print_config_info() {
+        let config = Config {
+            unbound_config_path: PathBuf::from("/etc/unbound/unbound.conf"),
+            domains: vec![
+                DomainConfig {
+                    name: "example1.com".to_string(),
+                    key: "key1".to_string(),
+                },
+                DomainConfig {
+                    name: "example2.com".to_string(),
+                    key: "key2".to_string(),
+                },
+            ],
+        };
+
+        // Just ensure it doesn't panic - we can't easily test stdout
+        print_config_info(&config);
     }
 }
