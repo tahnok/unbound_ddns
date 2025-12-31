@@ -1,0 +1,19 @@
+# Example configuration file for unbound_ddns
+# Copy this file to config.toml and customize it for your setup
+
+# Path to the Unbound configuration file to update
+unbound_config_path = "/etc/unbound/unbound.conf"
+
+# Authorized domains and their secret keys
+# Each domain requires a unique secret key for authentication
+[[domains]]
+name = "home.example.com"
+key = "secret-key-1"
+
+[[domains]]
+name = "server.example.com"
+key = "secret-key-2"
+
+[[domains]]
+name = "vpn.example.com"
+key = "secret-key-3"
