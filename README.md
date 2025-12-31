@@ -13,7 +13,8 @@ Clients make HTTP requests to the server (typically using `curl` from a cron job
 1. Authenticates the request using a simple secret key
 2. Extracts the domain name to update
 3. Determines the new IP address (either from the request body or by detecting the client's IP)
-4. Updates the Unbound DNS configuration accordingly
+4. Updates the `local-data` entry in the Unbound configuration file for the specified domain
+5. Issues a reload command to Unbound to apply the changes without downtime
 
 ## API
 
