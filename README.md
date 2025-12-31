@@ -2,6 +2,8 @@
 
 A lightweight self-hosted Dynamic DNS server that integrates with Unbound DNS.
 
+This app is am experiment in writing code using Claude Code from my phone while nap trapped by my newborn. It is entirely written by AI. Do what you will with that information 
+
 ## Overview
 
 This server allows you to easily update DNS records for your self-hosted Unbound DNS server when your IP address changes. Perfect for home servers, dynamic IP connections, or any scenario where you need to keep DNS records in sync with changing IP addresses.
