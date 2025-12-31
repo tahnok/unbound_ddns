@@ -338,21 +338,72 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    // ============================================================================
+    // TEST HELPERS
+    // ============================================================================
+
+    /// Creates a temporary unbound config file with optional domain entries.
+    ///
+    /// # Arguments
+    /// * `domains` - Optional slice of tuples (domain_name, ip_address) to add as local-data entries
+    ///
+    /// # Returns
+    /// A NamedTempFile that will be automatically deleted when dropped
+    fn create_unbound_config(domains: Option<&[(&str, &str)]>) -> NamedTempFile {
+        let mut file = NamedTempFile::new().unwrap();
+        writeln!(file, "server:").unwrap();
+        writeln!(file, "  verbosity: 1").unwrap();
+
+        if let Some(domain_entries) = domains {
+            for (domain, ip) in domain_entries {
+                writeln!(file, "local-data: \"{} IN A {}\"", domain, ip).unwrap();
+            }
+        }
+
+        file
+    }
+
+    /// Creates a test Config struct with optional parameters.
+    ///
+    /// # Arguments
+    /// * `unbound_config_path` - Optional path to unbound config file
+    /// * `domains` - Optional slice of tuples (domain_name, api_key) for domain configs
+    ///
+    /// # Returns
+    /// A Config struct ready for testing
+    fn create_test_config(
+        unbound_config_path: Option<PathBuf>,
+        domains: Option<&[(&str, &str)]>,
+    ) -> Config {
+        Config {
+            unbound_config_path: unbound_config_path
+                .unwrap_or_else(|| PathBuf::from("/tmp/test.conf")),
+            domains: domains
+                .map(|d| {
+                    d.iter()
+                        .map(|(name, key)| DomainConfig {
+                            name: name.to_string(),
+                            key: key.to_string(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_else(Vec::new),
+        }
+    }
+
+    // ============================================================================
+    // TESTS
+    // ============================================================================
 
     #[test]
     fn test_config_parsing() {
-        use std::io::Write;
-
-        let temp_dir = std::env::temp_dir();
-        let unbound_config_path = temp_dir.join("test_config_parsing.conf");
-
-        // Create mock Unbound config with the domains
-        let mut file = fs::File::create(&unbound_config_path).unwrap();
-        writeln!(file, "server:").unwrap();
-        writeln!(file, "  verbosity: 1").unwrap();
-        writeln!(file, "local-data: \"home.example.com IN A 192.168.1.1\"").unwrap();
-        writeln!(file, "local-data: \"server.example.com IN A 192.168.1.2\"").unwrap();
-        drop(file);
+        let unbound_file = create_unbound_config(Some(&[
+            ("home.example.com", "192.168.1.1"),
+            ("server.example.com", "192.168.1.2"),
+        ]));
 
         let toml_content = format!(
             r#"
@@ -366,26 +417,20 @@ key = "secret-key-1"
 name = "server.example.com"
 key = "secret-key-2"
 "#,
-            unbound_config_path.display()
+            unbound_file.path().display()
         );
 
         let config: Config = toml::from_str(&toml_content).unwrap();
         config.validate().unwrap();
-        assert_eq!(config.unbound_config_path, unbound_config_path);
+        assert_eq!(config.unbound_config_path, unbound_file.path());
         assert_eq!(config.domains.len(), 2);
         assert_eq!(config.domains[0].name, "home.example.com");
         assert_eq!(config.domains[0].key, "secret-key-1");
-
-        // Cleanup
-        fs::remove_file(&unbound_config_path).unwrap();
     }
 
     #[test]
     fn test_config_validation_no_domains() {
-        let config = Config {
-            unbound_config_path: PathBuf::from("/etc/unbound/unbound.conf"),
-            domains: vec![],
-        };
+        let config = create_test_config(None, None);
         let result = config.validate();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("at least one domain"));
@@ -393,13 +438,7 @@ key = "secret-key-2"
 
     #[test]
     fn test_config_validation_empty_domain_name() {
-        let config = Config {
-            unbound_config_path: PathBuf::from("/etc/unbound/unbound.conf"),
-            domains: vec![DomainConfig {
-                name: "".to_string(),
-                key: "key1".to_string(),
-            }],
-        };
+        let config = create_test_config(None, Some(&[("", "key1")]));
         let result = config.validate();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("empty name"));
@@ -407,13 +446,7 @@ key = "secret-key-2"
 
     #[test]
     fn test_config_validation_empty_key() {
-        let config = Config {
-            unbound_config_path: PathBuf::from("/etc/unbound/unbound.conf"),
-            domains: vec![DomainConfig {
-                name: "test.example.com".to_string(),
-                key: "".to_string(),
-            }],
-        };
+        let config = create_test_config(None, Some(&[("test.example.com", "")]));
         let result = config.validate();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("empty key"));
@@ -421,19 +454,10 @@ key = "secret-key-2"
 
     #[test]
     fn test_config_validation_duplicate_domains() {
-        let config = Config {
-            unbound_config_path: PathBuf::from("/etc/unbound/unbound.conf"),
-            domains: vec![
-                DomainConfig {
-                    name: "test.example.com".to_string(),
-                    key: "key1".to_string(),
-                },
-                DomainConfig {
-                    name: "test.example.com".to_string(),
-                    key: "key2".to_string(),
-                },
-            ],
-        };
+        let config = create_test_config(
+            None,
+            Some(&[("test.example.com", "key1"), ("test.example.com", "key2")]),
+        );
         let result = config.validate();
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Duplicate domain"));
@@ -441,19 +465,10 @@ key = "secret-key-2"
 
     #[test]
     fn test_find_domain() {
-        let config = Config {
-            unbound_config_path: PathBuf::from("/etc/unbound/unbound.conf"),
-            domains: vec![
-                DomainConfig {
-                    name: "home.example.com".to_string(),
-                    key: "key1".to_string(),
-                },
-                DomainConfig {
-                    name: "server.example.com".to_string(),
-                    key: "key2".to_string(),
-                },
-            ],
-        };
+        let config = create_test_config(
+            None,
+            Some(&[("home.example.com", "key1"), ("server.example.com", "key2")]),
+        );
 
         assert!(config.find_domain("home.example.com").is_some());
         assert!(config.find_domain("nonexistent.com").is_none());
@@ -461,78 +476,50 @@ key = "secret-key-2"
 
     #[test]
     fn test_config_validation_domain_not_in_unbound_config() {
-        use std::io::Write;
-        let temp_dir = std::env::temp_dir();
-        let unbound_config_path = temp_dir.join("test_validation_missing_domain.conf");
+        let unbound_file = create_unbound_config(None);
 
-        // Create Unbound config without the domain
-        let mut file = fs::File::create(&unbound_config_path).unwrap();
-        writeln!(file, "server:").unwrap();
-        writeln!(file, "  verbosity: 1").unwrap();
-        drop(file);
-
-        let config = Config {
-            unbound_config_path: unbound_config_path.clone(),
-            domains: vec![DomainConfig {
-                name: "missing.example.com".to_string(),
-                key: "key1".to_string(),
-            }],
-        };
+        let config = create_test_config(
+            Some(unbound_file.path().to_path_buf()),
+            Some(&[("missing.example.com", "key1")]),
+        );
 
         let result = config.validate();
         assert!(result.is_err());
         let error_msg = result.unwrap_err();
         assert!(error_msg.contains("missing.example.com"));
         assert!(error_msg.contains("not found in Unbound config"));
-
-        // Cleanup
-        fs::remove_file(&unbound_config_path).unwrap();
     }
 
     #[test]
     fn test_update_unbound_config_nonexistent_domain() {
-        use std::io::Write;
-        let temp_dir = std::env::temp_dir();
-        let config_path = temp_dir.join("test_unbound_nonexistent.conf");
-
-        // Create initial config without the domain
-        let mut file = fs::File::create(&config_path).unwrap();
-        writeln!(file, "server:").unwrap();
-        writeln!(file, "  verbosity: 1").unwrap();
-        drop(file);
+        let unbound_file = create_unbound_config(None);
 
         // Try to update non-existent domain - should fail
-        let result = update_unbound_config(&config_path, "test.example.com", "192.168.1.1");
+        let result = update_unbound_config(
+            &unbound_file.path().to_path_buf(),
+            "test.example.com",
+            "192.168.1.1",
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("not found in Unbound config"));
-
-        // Cleanup
-        fs::remove_file(&config_path).unwrap();
     }
 
     #[test]
     fn test_update_unbound_config_replace_entry() {
-        use std::io::Write;
-        let temp_dir = std::env::temp_dir();
-        let config_path = temp_dir.join("test_unbound_replace.conf");
-
-        // Create initial config with existing entry
-        let mut file = fs::File::create(&config_path).unwrap();
-        writeln!(file, "server:").unwrap();
-        writeln!(file, "  verbosity: 1").unwrap();
-        writeln!(file, "local-data: \"test.example.com IN A 192.168.1.1\"").unwrap();
-        drop(file);
+        let unbound_file = create_unbound_config(Some(&[("test.example.com", "192.168.1.1")]));
 
         // Update existing entry
-        update_unbound_config(&config_path, "test.example.com", "10.0.0.1").unwrap();
+        update_unbound_config(
+            &unbound_file.path().to_path_buf(),
+            "test.example.com",
+            "10.0.0.1",
+        )
+        .unwrap();
 
         // Verify
-        let content = fs::read_to_string(&config_path).unwrap();
+        let content = fs::read_to_string(unbound_file.path()).unwrap();
         assert!(content.contains("local-data: \"test.example.com IN A 10.0.0.1\""));
         assert!(!content.contains("192.168.1.1"));
-
-        // Cleanup
-        fs::remove_file(&config_path).unwrap();
     }
 
     // ============================================================================
@@ -546,13 +533,10 @@ key = "secret-key-2"
         use axum::http::{Request, StatusCode};
         use tower::ServiceExt;
 
-        let config = Arc::new(Config {
-            unbound_config_path: PathBuf::from("/tmp/test.conf"),
-            domains: vec![DomainConfig {
-                name: "allowed.example.com".to_string(),
-                key: "secret123".to_string(),
-            }],
-        });
+        let config = Arc::new(create_test_config(
+            None,
+            Some(&[("allowed.example.com", "secret123")]),
+        ));
 
         let app = Router::new()
             .route("/update", post(update_handler))
@@ -585,13 +569,10 @@ key = "secret-key-2"
         use axum::http::{Request, StatusCode};
         use tower::ServiceExt;
 
-        let config = Arc::new(Config {
-            unbound_config_path: PathBuf::from("/tmp/test.conf"),
-            domains: vec![DomainConfig {
-                name: "test.example.com".to_string(),
-                key: "correct-key".to_string(),
-            }],
-        });
+        let config = Arc::new(create_test_config(
+            None,
+            Some(&[("test.example.com", "correct-key")]),
+        ));
 
         let app = Router::new()
             .route("/update", post(update_handler))
@@ -622,25 +603,14 @@ key = "secret-key-2"
     async fn test_update_endpoint_with_explicit_ip() {
         use axum::body::Body;
         use axum::http::{Request, StatusCode};
-        use std::io::Write;
         use tower::ServiceExt;
 
-        // Create temp config file with initial domain entry
-        let temp_dir = std::env::temp_dir();
-        let config_path = temp_dir.join("test_integration.conf");
-        let mut file = fs::File::create(&config_path).unwrap();
-        writeln!(file, "server:").unwrap();
-        writeln!(file, "  verbosity: 1").unwrap();
-        writeln!(file, "local-data: \"test.example.com IN A 192.168.1.1\"").unwrap();
-        drop(file);
+        let unbound_file = create_unbound_config(Some(&[("test.example.com", "192.168.1.1")]));
 
-        let config = Arc::new(Config {
-            unbound_config_path: config_path.clone(),
-            domains: vec![DomainConfig {
-                name: "test.example.com".to_string(),
-                key: "test-key".to_string(),
-            }],
-        });
+        let config = Arc::new(create_test_config(
+            Some(unbound_file.path().to_path_buf()),
+            Some(&[("test.example.com", "test-key")]),
+        ));
 
         let app = Router::new()
             .route("/update", post(update_handler))
@@ -676,36 +646,22 @@ key = "secret-key-2"
         );
 
         // Verify config was updated
-        let content = fs::read_to_string(&config_path).unwrap();
+        let content = fs::read_to_string(unbound_file.path()).unwrap();
         assert!(content.contains("local-data: \"test.example.com IN A 203.0.113.42\""));
-
-        // Cleanup
-        fs::remove_file(&config_path).unwrap();
     }
 
     #[tokio::test]
     async fn test_update_endpoint_auto_detect_ip() {
         use axum::body::Body;
         use axum::http::{Request, StatusCode};
-        use std::io::Write;
         use tower::ServiceExt;
 
-        // Create temp config file with initial domain entry
-        let temp_dir = std::env::temp_dir();
-        let config_path = temp_dir.join("test_integration_autoip.conf");
-        let mut file = fs::File::create(&config_path).unwrap();
-        writeln!(file, "server:").unwrap();
-        writeln!(file, "  verbosity: 1").unwrap();
-        writeln!(file, "local-data: \"auto.example.com IN A 192.168.1.1\"").unwrap();
-        drop(file);
+        let unbound_file = create_unbound_config(Some(&[("auto.example.com", "192.168.1.1")]));
 
-        let config = Arc::new(Config {
-            unbound_config_path: config_path.clone(),
-            domains: vec![DomainConfig {
-                name: "auto.example.com".to_string(),
-                key: "auto-key".to_string(),
-            }],
-        });
+        let config = Arc::new(create_test_config(
+            Some(unbound_file.path().to_path_buf()),
+            Some(&[("auto.example.com", "auto-key")]),
+        ));
 
         let app = Router::new()
             .route("/update", post(update_handler))
@@ -739,36 +695,22 @@ key = "secret-key-2"
         );
 
         // Verify config was updated with client IP
-        let content = fs::read_to_string(&config_path).unwrap();
+        let content = fs::read_to_string(unbound_file.path()).unwrap();
         assert!(content.contains("local-data: \"auto.example.com IN A 198.51.100.42\""));
-
-        // Cleanup
-        fs::remove_file(&config_path).unwrap();
     }
 
     #[tokio::test]
     async fn test_update_endpoint_json_with_explicit_ip() {
         use axum::body::Body;
         use axum::http::{Request, StatusCode};
-        use std::io::Write;
         use tower::ServiceExt;
 
-        // Create temp config file with initial domain entry
-        let temp_dir = std::env::temp_dir();
-        let config_path = temp_dir.join("test_integration_json.conf");
-        let mut file = fs::File::create(&config_path).unwrap();
-        writeln!(file, "server:").unwrap();
-        writeln!(file, "  verbosity: 1").unwrap();
-        writeln!(file, "local-data: \"json.example.com IN A 192.168.1.1\"").unwrap();
-        drop(file);
+        let unbound_file = create_unbound_config(Some(&[("json.example.com", "192.168.1.1")]));
 
-        let config = Arc::new(Config {
-            unbound_config_path: config_path.clone(),
-            domains: vec![DomainConfig {
-                name: "json.example.com".to_string(),
-                key: "json-key".to_string(),
-            }],
-        });
+        let config = Arc::new(create_test_config(
+            Some(unbound_file.path().to_path_buf()),
+            Some(&[("json.example.com", "json-key")]),
+        ));
 
         let app = Router::new()
             .route("/update", post(update_handler))
@@ -804,36 +746,22 @@ key = "secret-key-2"
         );
 
         // Verify config was updated
-        let content = fs::read_to_string(&config_path).unwrap();
+        let content = fs::read_to_string(unbound_file.path()).unwrap();
         assert!(content.contains("local-data: \"json.example.com IN A 203.0.113.100\""));
-
-        // Cleanup
-        fs::remove_file(&config_path).unwrap();
     }
 
     #[tokio::test]
     async fn test_update_endpoint_json_auto_detect_ip() {
         use axum::body::Body;
         use axum::http::{Request, StatusCode};
-        use std::io::Write;
         use tower::ServiceExt;
 
-        // Create temp config file with initial domain entry
-        let temp_dir = std::env::temp_dir();
-        let config_path = temp_dir.join("test_integration_json_auto.conf");
-        let mut file = fs::File::create(&config_path).unwrap();
-        writeln!(file, "server:").unwrap();
-        writeln!(file, "  verbosity: 1").unwrap();
-        writeln!(file, "local-data: \"autoip.example.com IN A 192.168.1.1\"").unwrap();
-        drop(file);
+        let unbound_file = create_unbound_config(Some(&[("autoip.example.com", "192.168.1.1")]));
 
-        let config = Arc::new(Config {
-            unbound_config_path: config_path.clone(),
-            domains: vec![DomainConfig {
-                name: "autoip.example.com".to_string(),
-                key: "autoip-key".to_string(),
-            }],
-        });
+        let config = Arc::new(create_test_config(
+            Some(unbound_file.path().to_path_buf()),
+            Some(&[("autoip.example.com", "autoip-key")]),
+        ));
 
         let app = Router::new()
             .route("/update", post(update_handler))
@@ -869,25 +797,14 @@ key = "secret-key-2"
         );
 
         // Verify config was updated with client IP
-        let content = fs::read_to_string(&config_path).unwrap();
+        let content = fs::read_to_string(unbound_file.path()).unwrap();
         assert!(content.contains("local-data: \"autoip.example.com IN A 198.51.100.99\""));
-
-        // Cleanup
-        fs::remove_file(&config_path).unwrap();
     }
 
     #[test]
     fn test_config_load() {
-        use std::io::Write;
-        let temp_dir = std::env::temp_dir();
-        let config_file = temp_dir.join("test_config_load.toml");
-        let unbound_config = temp_dir.join("test_config_load_unbound.conf");
-
-        // Create Unbound config with domain
-        let mut file = fs::File::create(&unbound_config).unwrap();
-        writeln!(file, "server:").unwrap();
-        writeln!(file, "local-data: \"example.com IN A 192.168.1.1\"").unwrap();
-        drop(file);
+        let unbound_file = create_unbound_config(Some(&[("example.com", "192.168.1.1")]));
+        let config_file = NamedTempFile::new().unwrap();
 
         // Create config file
         let config_content = format!(
@@ -897,20 +814,16 @@ key = "secret-key-2"
 name = "example.com"
 key = "test-key"
 "#,
-            unbound_config.display()
+            unbound_file.path().display()
         );
-        fs::write(&config_file, config_content).unwrap();
+        fs::write(config_file.path(), config_content).unwrap();
 
         // Test successful load
-        let result = Config::load(config_file.to_str().unwrap());
+        let result = Config::load(config_file.path().to_str().unwrap());
         assert!(result.is_ok());
         let config = result.unwrap();
         assert_eq!(config.domains.len(), 1);
         assert_eq!(config.domains[0].name, "example.com");
-
-        // Cleanup
-        fs::remove_file(&config_file).unwrap();
-        fs::remove_file(&unbound_config).unwrap();
     }
 
     #[test]
@@ -922,20 +835,12 @@ key = "test-key"
 
     #[test]
     fn test_config_load_invalid_toml() {
-        use std::io::Write;
-        let temp_dir = std::env::temp_dir();
-        let config_file = temp_dir.join("test_invalid_toml.toml");
+        let mut config_file = NamedTempFile::new().unwrap();
+        writeln!(config_file, "invalid toml {{{{").unwrap();
 
-        let mut file = fs::File::create(&config_file).unwrap();
-        writeln!(file, "invalid toml {{{{").unwrap();
-        drop(file);
-
-        let result = Config::load(config_file.to_str().unwrap());
+        let result = Config::load(config_file.path().to_str().unwrap());
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to parse config file"));
-
-        // Cleanup
-        fs::remove_file(&config_file).unwrap();
     }
 
     #[test]
@@ -1023,13 +928,10 @@ key = "test-key"
         use axum::http::{Request, StatusCode};
         use tower::ServiceExt;
 
-        let config = Arc::new(Config {
-            unbound_config_path: PathBuf::from("/tmp/test.conf"),
-            domains: vec![DomainConfig {
-                name: "test.example.com".to_string(),
-                key: "test-key".to_string(),
-            }],
-        });
+        let config = Arc::new(create_test_config(
+            None,
+            Some(&[("test.example.com", "test-key")]),
+        ));
 
         let app = Router::new()
             .route("/update", post(update_handler))
@@ -1061,13 +963,10 @@ key = "test-key"
         use axum::http::{Request, StatusCode};
         use tower::ServiceExt;
 
-        let config = Arc::new(Config {
-            unbound_config_path: PathBuf::from("/tmp/test.conf"),
-            domains: vec![DomainConfig {
-                name: "test.example.com".to_string(),
-                key: "test-key".to_string(),
-            }],
-        });
+        let config = Arc::new(create_test_config(
+            None,
+            Some(&[("test.example.com", "test-key")]),
+        ));
 
         let app = Router::new()
             .route("/update", post(update_handler))
@@ -1096,13 +995,10 @@ key = "test-key"
 
     #[test]
     fn test_create_app() {
-        let config = Arc::new(Config {
-            unbound_config_path: PathBuf::from("/tmp/test.conf"),
-            domains: vec![DomainConfig {
-                name: "test.example.com".to_string(),
-                key: "test-key".to_string(),
-            }],
-        });
+        let config = Arc::new(create_test_config(
+            None,
+            Some(&[("test.example.com", "test-key")]),
+        ));
 
         let app = create_app(config);
         // Just verify the router is created successfully
@@ -1112,19 +1008,10 @@ key = "test-key"
 
     #[test]
     fn test_print_config_info() {
-        let config = Config {
-            unbound_config_path: PathBuf::from("/etc/unbound/unbound.conf"),
-            domains: vec![
-                DomainConfig {
-                    name: "example1.com".to_string(),
-                    key: "key1".to_string(),
-                },
-                DomainConfig {
-                    name: "example2.com".to_string(),
-                    key: "key2".to_string(),
-                },
-            ],
-        };
+        let config = create_test_config(
+            None,
+            Some(&[("example1.com", "key1"), ("example2.com", "key2")]),
+        );
 
         // Just ensure it doesn't panic - we can't easily test stdout
         print_config_info(&config);
