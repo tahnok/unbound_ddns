@@ -1,9 +1,9 @@
 use axum::{
+    Router,
     extract::{ConnectInfo, Form, State},
     http::StatusCode,
     response::IntoResponse,
     routing::post,
-    Router,
 };
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -27,11 +27,11 @@ struct DomainConfig {
 
 impl Config {
     fn load(path: &str) -> Result<Self, String> {
-        let content = fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read config file: {}", e))?;
+        let content =
+            fs::read_to_string(path).map_err(|e| format!("Failed to read config file: {}", e))?;
 
-        let config: Config = toml::from_str(&content)
-            .map_err(|e| format!("Failed to parse config file: {}", e))?;
+        let config: Config =
+            toml::from_str(&content).map_err(|e| format!("Failed to parse config file: {}", e))?;
 
         config.validate()?;
         Ok(config)
@@ -66,8 +66,12 @@ impl Config {
         }
 
         // Check if Unbound config file exists and contains all configured domains
-        let unbound_content = fs::read_to_string(&self.unbound_config_path)
-            .map_err(|e| format!("Failed to read Unbound config file at {:?}: {}", self.unbound_config_path, e))?;
+        let unbound_content = fs::read_to_string(&self.unbound_config_path).map_err(|e| {
+            format!(
+                "Failed to read Unbound config file at {:?}: {}",
+                self.unbound_config_path, e
+            )
+        })?;
 
         for domain in &self.domains {
             if !domain_exists_in_config(&unbound_content, &domain.name) {
@@ -171,11 +175,7 @@ fn domain_exists_in_config(content: &str, domain: &str) -> bool {
     }
 }
 
-fn update_unbound_config(
-    config_path: &PathBuf,
-    domain: &str,
-    ip: &str,
-) -> Result<(), String> {
+fn update_unbound_config(config_path: &PathBuf, domain: &str, ip: &str) -> Result<(), String> {
     // Read the current configuration
     let content = fs::read_to_string(config_path)
         .map_err(|e| format!("Failed to read Unbound config: {}", e))?;
@@ -192,9 +192,11 @@ fn update_unbound_config(
     let new_entry = format!("local-data: \"{} IN A {}\"", domain, ip);
 
     // Pattern to match existing local-data entry for this domain
-    let pattern = format!(r#"local-data:\s*"{}\s+IN\s+A\s+[^"]+""#, regex::escape(domain));
-    let re = Regex::new(&pattern)
-        .map_err(|e| format!("Failed to compile regex: {}", e))?;
+    let pattern = format!(
+        r#"local-data:\s*"{}\s+IN\s+A\s+[^"]+""#,
+        regex::escape(domain)
+    );
+    let re = Regex::new(&pattern).map_err(|e| format!("Failed to compile regex: {}", e))?;
 
     // Replace existing entry (we already checked it exists)
     let updated_content = re.replace(&content, new_entry.as_str()).to_string();
@@ -244,9 +246,7 @@ async fn main() {
         .with_state(config);
 
     // Start the server
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
 
     println!("\nServer running on http://0.0.0.0:3000");
 
@@ -526,7 +526,9 @@ key = "secret-key-2"
             .extension(ConnectInfo(
                 "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
             ))
-            .body(Body::from("key=wrong-key&domain=test.example.com&ip=10.0.0.1"))
+            .body(Body::from(
+                "key=wrong-key&domain=test.example.com&ip=10.0.0.1",
+            ))
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
