@@ -6,4 +6,4 @@
 - [x] Automatic release builds for Intel and arm (not mac arm)
 - [x] Add example systemd unit along with better install instructions
 - [x] explore test coverage options
-- [ ] support looking at request ip behind proxy (aka based on x-real-ip)
+- [x] support looking at request ip behind proxy (aka based on x-real-ip)
