@@ -65,6 +65,19 @@ impl Config {
             }
         }
 
+        // Check if Unbound config file exists and contains all configured domains
+        let unbound_content = fs::read_to_string(&self.unbound_config_path)
+            .map_err(|e| format!("Failed to read Unbound config file at {:?}: {}", self.unbound_config_path, e))?;
+
+        for domain in &self.domains {
+            if !domain_exists_in_config(&unbound_content, &domain.name) {
+                return Err(format!(
+                    "Domain '{}' not found in Unbound config file. Please add 'local-data: \"{} IN A <ip>\"' to {:?} first.",
+                    domain.name, domain.name, self.unbound_config_path
+                ));
+            }
+        }
+
         Ok(())
     }
 
@@ -149,6 +162,15 @@ async fn update_handler(
     }
 }
 
+fn domain_exists_in_config(content: &str, domain: &str) -> bool {
+    let pattern = format!(r#"local-data:\s*"{}\s+IN\s+A\s+"#, regex::escape(domain));
+    if let Ok(re) = Regex::new(&pattern) {
+        re.is_match(content)
+    } else {
+        false
+    }
+}
+
 fn update_unbound_config(
     config_path: &PathBuf,
     domain: &str,
@@ -158,6 +180,14 @@ fn update_unbound_config(
     let content = fs::read_to_string(config_path)
         .map_err(|e| format!("Failed to read Unbound config: {}", e))?;
 
+    // Check if domain exists in the configuration
+    if !domain_exists_in_config(&content, domain) {
+        return Err(format!(
+            "Domain '{}' not found in Unbound config. Cannot update non-existent domain.",
+            domain
+        ));
+    }
+
     // Create the new local-data entry
     let new_entry = format!("local-data: \"{} IN A {}\"", domain, ip);
 
@@ -166,13 +196,8 @@ fn update_unbound_config(
     let re = Regex::new(&pattern)
         .map_err(|e| format!("Failed to compile regex: {}", e))?;
 
-    let updated_content = if re.is_match(&content) {
-        // Replace existing entry
-        re.replace(&content, new_entry.as_str()).to_string()
-    } else {
-        // Append new entry
-        format!("{}\n{}\n", content.trim_end(), new_entry)
-    };
+    // Replace existing entry (we already checked it exists)
+    let updated_content = re.replace(&content, new_entry.as_str()).to_string();
 
     // Write the updated configuration
     fs::write(config_path, updated_content)
@@ -239,8 +264,22 @@ mod tests {
 
     #[test]
     fn test_config_parsing() {
-        let toml_content = r#"
-unbound_config_path = "/etc/unbound/unbound.conf"
+        use std::io::Write;
+
+        let temp_dir = std::env::temp_dir();
+        let unbound_config_path = temp_dir.join("test_config_parsing.conf");
+
+        // Create mock Unbound config with the domains
+        let mut file = fs::File::create(&unbound_config_path).unwrap();
+        writeln!(file, "server:").unwrap();
+        writeln!(file, "  verbosity: 1").unwrap();
+        writeln!(file, "local-data: \"home.example.com IN A 192.168.1.1\"").unwrap();
+        writeln!(file, "local-data: \"server.example.com IN A 192.168.1.2\"").unwrap();
+        drop(file);
+
+        let toml_content = format!(
+            r#"
+unbound_config_path = "{}"
 
 [[domains]]
 name = "home.example.com"
@@ -249,13 +288,19 @@ key = "secret-key-1"
 [[domains]]
 name = "server.example.com"
 key = "secret-key-2"
-"#;
-        let config: Config = toml::from_str(toml_content).unwrap();
+"#,
+            unbound_config_path.display()
+        );
+
+        let config: Config = toml::from_str(&toml_content).unwrap();
         config.validate().unwrap();
-        assert_eq!(config.unbound_config_path, PathBuf::from("/etc/unbound/unbound.conf"));
+        assert_eq!(config.unbound_config_path, unbound_config_path);
         assert_eq!(config.domains.len(), 2);
         assert_eq!(config.domains[0].name, "home.example.com");
         assert_eq!(config.domains[0].key, "secret-key-1");
+
+        // Cleanup
+        fs::remove_file(&unbound_config_path).unwrap();
     }
 
     #[test]
@@ -338,23 +383,51 @@ key = "secret-key-2"
     }
 
     #[test]
-    fn test_update_unbound_config_new_entry() {
+    fn test_config_validation_domain_not_in_unbound_config() {
         use std::io::Write;
         let temp_dir = std::env::temp_dir();
-        let config_path = temp_dir.join("test_unbound.conf");
+        let unbound_config_path = temp_dir.join("test_validation_missing_domain.conf");
 
-        // Create initial config
+        // Create Unbound config without the domain
+        let mut file = fs::File::create(&unbound_config_path).unwrap();
+        writeln!(file, "server:").unwrap();
+        writeln!(file, "  verbosity: 1").unwrap();
+        drop(file);
+
+        let config = Config {
+            unbound_config_path: unbound_config_path.clone(),
+            domains: vec![DomainConfig {
+                name: "missing.example.com".to_string(),
+                key: "key1".to_string(),
+            }],
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err();
+        assert!(error_msg.contains("missing.example.com"));
+        assert!(error_msg.contains("not found in Unbound config"));
+
+        // Cleanup
+        fs::remove_file(&unbound_config_path).unwrap();
+    }
+
+    #[test]
+    fn test_update_unbound_config_nonexistent_domain() {
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir();
+        let config_path = temp_dir.join("test_unbound_nonexistent.conf");
+
+        // Create initial config without the domain
         let mut file = fs::File::create(&config_path).unwrap();
         writeln!(file, "server:").unwrap();
         writeln!(file, "  verbosity: 1").unwrap();
         drop(file);
 
-        // Add new entry
-        update_unbound_config(&config_path, "test.example.com", "192.168.1.1").unwrap();
-
-        // Verify
-        let content = fs::read_to_string(&config_path).unwrap();
-        assert!(content.contains("local-data: \"test.example.com IN A 192.168.1.1\""));
+        // Try to update non-existent domain - should fail
+        let result = update_unbound_config(&config_path, "test.example.com", "192.168.1.1");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not found in Unbound config"));
 
         // Cleanup
         fs::remove_file(&config_path).unwrap();
@@ -473,12 +546,13 @@ key = "secret-key-2"
         use std::io::Write;
         use tower::ServiceExt;
 
-        // Create temp config file
+        // Create temp config file with initial domain entry
         let temp_dir = std::env::temp_dir();
         let config_path = temp_dir.join("test_integration.conf");
         let mut file = fs::File::create(&config_path).unwrap();
         writeln!(file, "server:").unwrap();
         writeln!(file, "  verbosity: 1").unwrap();
+        writeln!(file, "local-data: \"test.example.com IN A 192.168.1.1\"").unwrap();
         drop(file);
 
         let config = Arc::new(Config {
@@ -538,12 +612,13 @@ key = "secret-key-2"
         use std::io::Write;
         use tower::ServiceExt;
 
-        // Create temp config file
+        // Create temp config file with initial domain entry
         let temp_dir = std::env::temp_dir();
         let config_path = temp_dir.join("test_integration_autoip.conf");
         let mut file = fs::File::create(&config_path).unwrap();
         writeln!(file, "server:").unwrap();
         writeln!(file, "  verbosity: 1").unwrap();
+        writeln!(file, "local-data: \"auto.example.com IN A 192.168.1.1\"").unwrap();
         drop(file);
 
         let config = Arc::new(Config {
