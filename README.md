@@ -27,7 +27,9 @@ Clients make HTTP requests to the server (typically using `curl` from a cron job
 - `domain` (required) - The domain name to update
 - `ip` (optional) - The new IP address. If omitted, the server will use the client's IP address from the request
 
-**Example Usage:**
+**Content Types:** The server accepts both `application/x-www-form-urlencoded` (form data) and `application/json`.
+
+**Example Usage with Form Data:**
 
 ```bash
 # Update with explicit IP
@@ -40,6 +42,20 @@ curl -X POST https://your-server.com/update \
 curl -X POST https://your-server.com/update \
   -d "key=your-secret-key" \
   -d "domain=home.example.com"
+```
+
+**Example Usage with JSON:**
+
+```bash
+# Update with explicit IP
+curl -X POST https://your-server.com/update \
+  -H "Content-Type: application/json" \
+  -d '{"key":"your-secret-key","domain":"home.example.com","ip":"203.0.113.42"}'
+
+# Update using client's IP (auto-detected)
+curl -X POST https://your-server.com/update \
+  -H "Content-Type: application/json" \
+  -d '{"key":"your-secret-key","domain":"home.example.com"}'
 ```
 
 ## Setup

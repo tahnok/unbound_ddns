@@ -1,7 +1,8 @@
 use axum::{
     Router,
-    extract::{ConnectInfo, Form, State},
-    http::StatusCode,
+    body::Bytes,
+    extract::{ConnectInfo, State},
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::post,
 };
@@ -118,8 +119,20 @@ impl IntoResponse for UpdateResponse {
 async fn update_handler(
     State(config): State<Arc<Config>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Form(payload): Form<UpdateRequest>,
+    headers: HeaderMap,
+    body: Bytes,
 ) -> UpdateResponse {
+    // Parse the request based on Content-Type
+    let payload = match parse_update_request(&headers, &body) {
+        Ok(p) => p,
+        Err(e) => {
+            return UpdateResponse {
+                success: false,
+                message: format!("Failed to parse request: {}", e),
+            };
+        }
+    };
+
     // Authenticate the request
     let domain_config = match config.find_domain(&payload.domain) {
         Some(d) => d,
@@ -163,6 +176,23 @@ async fn update_handler(
             success: false,
             message: format!("Failed to update configuration: {}", e),
         },
+    }
+}
+
+fn parse_update_request(headers: &HeaderMap, body: &Bytes) -> Result<UpdateRequest, String> {
+    let content_type = headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    if content_type.contains("application/json") {
+        // Parse as JSON
+        serde_json::from_slice(body).map_err(|e| format!("Invalid JSON: {}", e))
+    } else {
+        // Parse as form data (default)
+        let body_str = std::str::from_utf8(body).map_err(|e| format!("Invalid UTF-8: {}", e))?;
+
+        serde_urlencoded::from_str(body_str).map_err(|e| format!("Invalid form data: {}", e))
     }
 }
 
@@ -664,6 +694,134 @@ key = "secret-key-2"
         // Verify config was updated with client IP
         let content = fs::read_to_string(&config_path).unwrap();
         assert!(content.contains("local-data: \"auto.example.com IN A 198.51.100.42\""));
+
+        // Cleanup
+        fs::remove_file(&config_path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_update_endpoint_json_with_explicit_ip() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use std::io::Write;
+        use tower::ServiceExt;
+
+        // Create temp config file with initial domain entry
+        let temp_dir = std::env::temp_dir();
+        let config_path = temp_dir.join("test_integration_json.conf");
+        let mut file = fs::File::create(&config_path).unwrap();
+        writeln!(file, "server:").unwrap();
+        writeln!(file, "  verbosity: 1").unwrap();
+        writeln!(file, "local-data: \"json.example.com IN A 192.168.1.1\"").unwrap();
+        drop(file);
+
+        let config = Arc::new(Config {
+            unbound_config_path: config_path.clone(),
+            domains: vec![DomainConfig {
+                name: "json.example.com".to_string(),
+                key: "json-key".to_string(),
+            }],
+        });
+
+        let app = Router::new()
+            .route("/update", post(update_handler))
+            .with_state(config);
+
+        let json_body = r#"{"key":"json-key","domain":"json.example.com","ip":"203.0.113.100"}"#;
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/update")
+            .header("content-type", "application/json")
+            .extension(ConnectInfo(
+                "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+            ))
+            .body(Body::from(json_body))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Either succeeds or fails on unbound-control (expected in test environment)
+        assert!(
+            status == StatusCode::OK || body_str.contains("Failed to reload Unbound"),
+            "Unexpected response: {} - {}",
+            status,
+            body_str
+        );
+
+        // Verify config was updated
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("local-data: \"json.example.com IN A 203.0.113.100\""));
+
+        // Cleanup
+        fs::remove_file(&config_path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_update_endpoint_json_auto_detect_ip() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use std::io::Write;
+        use tower::ServiceExt;
+
+        // Create temp config file with initial domain entry
+        let temp_dir = std::env::temp_dir();
+        let config_path = temp_dir.join("test_integration_json_auto.conf");
+        let mut file = fs::File::create(&config_path).unwrap();
+        writeln!(file, "server:").unwrap();
+        writeln!(file, "  verbosity: 1").unwrap();
+        writeln!(file, "local-data: \"autoip.example.com IN A 192.168.1.1\"").unwrap();
+        drop(file);
+
+        let config = Arc::new(Config {
+            unbound_config_path: config_path.clone(),
+            domains: vec![DomainConfig {
+                name: "autoip.example.com".to_string(),
+                key: "autoip-key".to_string(),
+            }],
+        });
+
+        let app = Router::new()
+            .route("/update", post(update_handler))
+            .with_state(config);
+
+        let json_body = r#"{"key":"autoip-key","domain":"autoip.example.com"}"#;
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/update")
+            .header("content-type", "application/json")
+            .extension(ConnectInfo(
+                "198.51.100.99:54321".parse::<SocketAddr>().unwrap(),
+            ))
+            .body(Body::from(json_body))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Either succeeds or fails on unbound-control (expected in test environment)
+        assert!(
+            status == StatusCode::OK || body_str.contains("Failed to reload Unbound"),
+            "Unexpected response: {} - {}",
+            status,
+            body_str
+        );
+
+        // Verify config was updated with client IP
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("local-data: \"autoip.example.com IN A 198.51.100.99\""));
 
         // Cleanup
         fs::remove_file(&config_path).unwrap();
