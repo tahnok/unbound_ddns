@@ -30,8 +30,42 @@ impl Config {
         let content = fs::read_to_string(path)
             .map_err(|e| format!("Failed to read config file: {}", e))?;
 
-        toml::from_str(&content)
-            .map_err(|e| format!("Failed to parse config file: {}", e))
+        let config: Config = toml::from_str(&content)
+            .map_err(|e| format!("Failed to parse config file: {}", e))?;
+
+        config.validate()?;
+        Ok(config)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        // Check if there are any domains configured
+        if self.domains.is_empty() {
+            return Err("Configuration must contain at least one domain".to_string());
+        }
+
+        // Check each domain for validity
+        for (idx, domain) in self.domains.iter().enumerate() {
+            if domain.name.trim().is_empty() {
+                return Err(format!("Domain at index {} has an empty name", idx));
+            }
+            if domain.key.trim().is_empty() {
+                return Err(format!("Domain '{}' has an empty key", domain.name));
+            }
+        }
+
+        // Check for duplicate domain names
+        for i in 0..self.domains.len() {
+            for j in (i + 1)..self.domains.len() {
+                if self.domains[i].name == self.domains[j].name {
+                    return Err(format!(
+                        "Duplicate domain '{}' found in configuration",
+                        self.domains[i].name
+                    ));
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn find_domain(&self, name: &str) -> Option<&DomainConfig> {
@@ -217,10 +251,70 @@ name = "server.example.com"
 key = "secret-key-2"
 "#;
         let config: Config = toml::from_str(toml_content).unwrap();
+        config.validate().unwrap();
         assert_eq!(config.unbound_config_path, PathBuf::from("/etc/unbound/unbound.conf"));
         assert_eq!(config.domains.len(), 2);
         assert_eq!(config.domains[0].name, "home.example.com");
         assert_eq!(config.domains[0].key, "secret-key-1");
+    }
+
+    #[test]
+    fn test_config_validation_no_domains() {
+        let config = Config {
+            unbound_config_path: PathBuf::from("/etc/unbound/unbound.conf"),
+            domains: vec![],
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("at least one domain"));
+    }
+
+    #[test]
+    fn test_config_validation_empty_domain_name() {
+        let config = Config {
+            unbound_config_path: PathBuf::from("/etc/unbound/unbound.conf"),
+            domains: vec![DomainConfig {
+                name: "".to_string(),
+                key: "key1".to_string(),
+            }],
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("empty name"));
+    }
+
+    #[test]
+    fn test_config_validation_empty_key() {
+        let config = Config {
+            unbound_config_path: PathBuf::from("/etc/unbound/unbound.conf"),
+            domains: vec![DomainConfig {
+                name: "test.example.com".to_string(),
+                key: "".to_string(),
+            }],
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("empty key"));
+    }
+
+    #[test]
+    fn test_config_validation_duplicate_domains() {
+        let config = Config {
+            unbound_config_path: PathBuf::from("/etc/unbound/unbound.conf"),
+            domains: vec![
+                DomainConfig {
+                    name: "test.example.com".to_string(),
+                    key: "key1".to_string(),
+                },
+                DomainConfig {
+                    name: "test.example.com".to_string(),
+                    key: "key2".to_string(),
+                },
+            ],
+        };
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Duplicate domain"));
     }
 
     #[test]
