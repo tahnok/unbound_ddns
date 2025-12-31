@@ -48,7 +48,33 @@ _(Coming soon)_
 
 ## Configuration
 
-_(Coming soon)_
+The server is configured using a TOML configuration file.
+
+**Example configuration:**
+
+```toml
+# Path to the Unbound configuration file to update
+unbound_config_path = "/etc/unbound/unbound.conf"
+
+# Authorized domains and their secret keys
+[[domains]]
+name = "home.example.com"
+key = "secret-key-1"
+
+[[domains]]
+name = "server.example.com"
+key = "secret-key-2"
+
+[[domains]]
+name = "vpn.example.com"
+key = "secret-key-3"
+```
+
+**Configuration options:**
+- `unbound_config_path` - Path to the Unbound configuration file that will be updated
+- `domains` - Array of domain configurations, each containing:
+  - `name` - The domain name that can be updated
+  - `key` - The secret key required to authenticate updates for this domain
 
 ## License
 
