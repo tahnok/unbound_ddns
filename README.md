@@ -96,7 +96,21 @@ curl -X POST https://your-server.com/update \
    sudo nano /etc/unbound_ddns/config.toml
    ```
 
-2. **Add your configuration** (see Configuration section below for details)
+2. **Add your configuration** (see Configuration section below for details):
+
+   ```toml
+   # Path to the Unbound configuration file to update
+   unbound_config_path = "/etc/unbound/unbound.conf"
+
+   # Authorized domains and their secret keys
+   [[domains]]
+   name = "home.example.com"
+   key = "your-secret-key-here"
+
+   [[domains]]
+   name = "server.example.com"
+   key = "another-secret-key"
+   ```
 
 3. **Ensure proper permissions**:
    ```bash
