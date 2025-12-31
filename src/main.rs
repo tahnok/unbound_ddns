@@ -1,8 +1,4 @@
-use axum::{
-    routing::post,
-    Router,
-    Json,
-};
+use axum::{Json, Router, routing::post};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -18,8 +14,10 @@ struct UpdateResponse {
 }
 
 async fn update_handler(Json(payload): Json<UpdateRequest>) -> Json<UpdateResponse> {
-    println!("Received update request for hostname: {} with IP: {}",
-             payload.hostname, payload.ip);
+    println!(
+        "Received update request for hostname: {} with IP: {}",
+        payload.hostname, payload.ip
+    );
 
     Json(UpdateResponse {
         success: true,
@@ -29,12 +27,9 @@ async fn update_handler(Json(payload): Json<UpdateRequest>) -> Json<UpdateRespon
 
 #[tokio::main]
 async fn main() {
-    let app = Router::new()
-        .route("/update", post(update_handler));
+    let app = Router::new().route("/update", post(update_handler));
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
 
     println!("Server running on http://0.0.0.0:3000");
 
