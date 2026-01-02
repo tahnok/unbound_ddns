@@ -243,7 +243,7 @@ cargo test test_integration_with_real_unbound_and_dns_query -- --ignored --nocap
 cargo test -- --ignored
 ```
 
-**Note:** The integration test is marked as `#[ignore]` by default because it requires `unbound` to be installed. In CI/CD environments without unbound, only the standard unit tests will run.
+**Note:** The integration test is marked as `#[ignore]` by default to keep the standard test suite fast. However, the GitHub Actions CI workflow automatically installs unbound and runs the integration test on every push and pull request.
 
 ## License
 
