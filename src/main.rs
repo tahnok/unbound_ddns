@@ -1609,7 +1609,7 @@ key = "test-key"
             // Create unbound config with custom port
             let mut config_file = NamedTempFile::new().map_err(|e| e.to_string())?;
             writeln!(config_file, "server:").map_err(|e| e.to_string())?;
-            writeln!(config_file, "  verbosity: 1").map_err(|e| e.to_string())?;
+            writeln!(config_file, "  verbosity: 2").map_err(|e| e.to_string())?;
             writeln!(config_file, "  interface: 127.0.0.1@{}", port).map_err(|e| e.to_string())?;
             writeln!(config_file, "  port: {}", port).map_err(|e| e.to_string())?;
             writeln!(config_file, "  access-control: 127.0.0.0/8 allow")
@@ -1640,9 +1640,30 @@ key = "test-key"
             let config_content = std::fs::read_to_string(config_file.path()).unwrap();
             println!("{}", config_content);
 
+            // Validate config first
+            println!("Validating unbound config with unbound-checkconf...");
+            let check_output = Command::new("unbound-checkconf")
+                .arg(config_file.path())
+                .output();
+
+            match check_output {
+                Ok(output) if output.status.success() => {
+                    println!("Config validation passed");
+                }
+                Ok(output) => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(format!("Config validation failed: {}", stderr));
+                }
+                Err(e) => {
+                    println!("Warning: unbound-checkconf not available: {}", e);
+                }
+            }
+
             // Start unbound
-            let process = Command::new("unbound")
+            println!("Starting unbound process...");
+            let mut process = Command::new("unbound")
                 .arg("-d")
+                .arg("-v")
                 .arg("-c")
                 .arg(config_file.path())
                 .stdout(Stdio::piped())
@@ -1650,8 +1671,53 @@ key = "test-key"
                 .spawn()
                 .map_err(|e| format!("Failed to start unbound: {}. Is unbound installed?", e))?;
 
-            // Give unbound more time to start and wait for it to be ready
-            tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
+            // Give unbound a moment to start
+            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+            // Check if process is still alive
+            match process.try_wait() {
+                Ok(Some(status)) => {
+                    // Process has already exited - capture output
+                    let mut stdout = String::new();
+                    let mut stderr = String::new();
+                    if let Some(mut out) = process.stdout.take() {
+                        use std::io::Read;
+                        let _ = out.read_to_string(&mut stdout);
+                    }
+                    if let Some(mut err) = process.stderr.take() {
+                        use std::io::Read;
+                        let _ = err.read_to_string(&mut stderr);
+                    }
+                    return Err(format!(
+                        "Unbound exited immediately with status: {}\nStdout: {}\nStderr: {}",
+                        status, stdout, stderr
+                    ));
+                }
+                Ok(None) => {
+                    println!("Unbound process is running (PID: {:?})", process.id());
+                }
+                Err(e) => {
+                    return Err(format!("Failed to check unbound process status: {}", e));
+                }
+            }
+
+            // Wait a bit more for unbound to fully initialize
+            tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+
+            // Try to connect to the port to verify it's listening
+            println!("Checking if port {} is accessible...", port);
+            let socket_addr = std::net::SocketAddr::new(
+                std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+                port,
+            );
+
+            match std::net::TcpStream::connect_timeout(
+                &socket_addr,
+                std::time::Duration::from_millis(500),
+            ) {
+                Ok(_) => println!("Port {} is listening", port),
+                Err(e) => println!("Warning: Could not connect to port {}: {}", port, e),
+            }
 
             Ok(UnboundTestInstance {
                 process,
@@ -1679,7 +1745,7 @@ key = "test-key"
         }
     }
 
-    /// Query a DNS record from a specific server
+    /// Query a DNS record from a specific server with retry logic
     ///
     /// # Arguments
     /// * `domain` - Domain name to query
@@ -1704,19 +1770,30 @@ key = "test-key"
 
         let resolver_config = ResolverConfig::from_parts(None, vec![], vec![nameserver]);
 
-        let resolver = TokioAsyncResolver::tokio(resolver_config, ResolverOpts::default());
+        let mut opts = ResolverOpts::default();
+        opts.timeout = std::time::Duration::from_secs(5);
+        opts.attempts = 3;
 
-        match resolver.lookup_ip(domain).await {
-            Ok(lookup) => {
-                let result = lookup.iter().next();
-                println!("DNS query result: {:?}", result);
-                result
-            }
-            Err(e) => {
-                println!("DNS query error: {}", e);
-                None
+        let resolver = TokioAsyncResolver::tokio(resolver_config, opts);
+
+        // Retry a few times since unbound might need a moment to be ready
+        for attempt in 1..=3 {
+            match resolver.lookup_ip(domain).await {
+                Ok(lookup) => {
+                    let result = lookup.iter().next();
+                    println!("DNS query result (attempt {}): {:?}", attempt, result);
+                    return result;
+                }
+                Err(e) => {
+                    println!("DNS query error (attempt {}): {}", attempt, e);
+                    if attempt < 3 {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    }
+                }
             }
         }
+
+        None
     }
 
     // ============================================================================
