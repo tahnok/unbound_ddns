@@ -1270,7 +1270,9 @@ key = "test-key"
             .extension(ConnectInfo(
                 "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
             ))
-            .body(Body::from(r#"{"domain":"test.example.com","ip":"not-an-ip-address"}"#))
+            .body(Body::from(
+                r#"{"domain":"test.example.com","ip":"not-an-ip-address"}"#,
+            ))
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
@@ -1308,7 +1310,9 @@ key = "test-key"
             .extension(ConnectInfo(
                 "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
             ))
-            .body(Body::from(r#"{"domain":"test.example.com","ip":"256.1.2.3"}"#))
+            .body(Body::from(
+                r#"{"domain":"test.example.com","ip":"256.1.2.3"}"#,
+            ))
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
@@ -1346,7 +1350,9 @@ key = "test-key"
             .extension(ConnectInfo(
                 "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
             ))
-            .body(Body::from(r#"{"domain":"ipv6.example.com","ip":"2001:db8::1"}"#))
+            .body(Body::from(
+                r#"{"domain":"ipv6.example.com","ip":"2001:db8::1"}"#,
+            ))
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
