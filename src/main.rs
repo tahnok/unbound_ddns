@@ -238,6 +238,14 @@ async fn update_handler(
         None => extract_client_ip(&headers, &addr),
     };
 
+    // Validate the IP address
+    if ip.parse::<std::net::IpAddr>().is_err() {
+        return UpdateResponse {
+            success: false,
+            message: format!("Invalid IP address: {}", ip),
+        };
+    }
+
     // Update the Unbound configuration
     match update_unbound_config(&config.unbound_config_path, &payload.domain, &ip) {
         Ok(_) => {
@@ -1235,5 +1243,168 @@ key = "test-key"
         // Verify config was updated with the IP from X-Real-IP
         let content = fs::read_to_string(unbound_file.path()).unwrap();
         assert!(content.contains("local-data: \"realip.example.com IN A 203.0.113.75\""));
+    }
+
+    #[tokio::test]
+    async fn test_update_endpoint_invalid_ip_address() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let unbound_file = create_unbound_config(Some(&[("test.example.com", "192.168.1.1")]));
+
+        let config = Arc::new(create_test_config(
+            Some(unbound_file.path().to_path_buf()),
+            Some(&[("test.example.com", "test-key")]),
+        ));
+
+        let app = Router::new()
+            .route("/update", post(update_handler))
+            .with_state(config);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/update")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer test-key")
+            .extension(ConnectInfo(
+                "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+            ))
+            .body(Body::from(r#"{"domain":"test.example.com","ip":"not-an-ip-address"}"#))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("Invalid IP address"));
+    }
+
+    #[tokio::test]
+    async fn test_update_endpoint_malformed_ipv4_address() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let unbound_file = create_unbound_config(Some(&[("test.example.com", "192.168.1.1")]));
+
+        let config = Arc::new(create_test_config(
+            Some(unbound_file.path().to_path_buf()),
+            Some(&[("test.example.com", "test-key")]),
+        ));
+
+        let app = Router::new()
+            .route("/update", post(update_handler))
+            .with_state(config);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/update")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer test-key")
+            .extension(ConnectInfo(
+                "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+            ))
+            .body(Body::from(r#"{"domain":"test.example.com","ip":"256.1.2.3"}"#))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("Invalid IP address"));
+    }
+
+    #[tokio::test]
+    async fn test_update_endpoint_valid_ipv6_address() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let unbound_file = create_unbound_config(Some(&[("ipv6.example.com", "192.168.1.1")]));
+
+        let config = Arc::new(create_test_config(
+            Some(unbound_file.path().to_path_buf()),
+            Some(&[("ipv6.example.com", "ipv6-key")]),
+        ));
+
+        let app = Router::new()
+            .route("/update", post(update_handler))
+            .with_state(config);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/update")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer ipv6-key")
+            .extension(ConnectInfo(
+                "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+            ))
+            .body(Body::from(r#"{"domain":"ipv6.example.com","ip":"2001:db8::1"}"#))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Either succeeds or fails on unbound-control (expected in test environment)
+        assert!(
+            status == StatusCode::OK || body_str.contains("Failed to reload Unbound"),
+            "Unexpected response: {} - {}",
+            status,
+            body_str
+        );
+
+        // Verify config was updated with IPv6 address
+        let content = fs::read_to_string(unbound_file.path()).unwrap();
+        assert!(content.contains("local-data: \"ipv6.example.com IN A 2001:db8::1\""));
+    }
+
+    #[tokio::test]
+    async fn test_update_endpoint_empty_ip_address() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let unbound_file = create_unbound_config(Some(&[("test.example.com", "192.168.1.1")]));
+
+        let config = Arc::new(create_test_config(
+            Some(unbound_file.path().to_path_buf()),
+            Some(&[("test.example.com", "test-key")]),
+        ));
+
+        let app = Router::new()
+            .route("/update", post(update_handler))
+            .with_state(config);
+
+        let request = Request::builder()
+            .method("POST")
+            .uri("/update")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer test-key")
+            .extension(ConnectInfo(
+                "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+            ))
+            .body(Body::from(r#"{"domain":"test.example.com","ip":""}"#))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body_str.contains("Invalid IP address"));
     }
 }
