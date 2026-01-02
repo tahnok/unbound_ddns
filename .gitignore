@@ -1,1 +1,4 @@
 /target
+
+# Test-generated unbound config files
+unbound-test-*.conf

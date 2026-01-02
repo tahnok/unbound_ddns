@@ -1606,8 +1606,8 @@ key = "test-key"
         /// # Returns
         /// An UnboundTestInstance that will automatically clean up when dropped
         async fn start(port: u16, domains: Option<&[(&str, &str)]>) -> Result<Self, String> {
-            // Create a writable config file in /tmp
-            let config_path = format!("/tmp/unbound-test-{}.conf", port);
+            // Create config file in current working directory (accessible to subprocesses)
+            let config_path = format!("unbound-test-{}.conf", port);
             let mut config_content = String::new();
 
             // Build config content
@@ -1635,7 +1635,7 @@ key = "test-key"
                 }
             }
 
-            // Write config file to /tmp with world-readable permissions
+            // Write config file with world-readable permissions
             fs::write(&config_path, &config_content).map_err(|e| e.to_string())?;
 
             // Set permissions to be readable by all (chmod 644)
@@ -1646,7 +1646,7 @@ key = "test-key"
                 fs::set_permissions(&config_path, permissions).map_err(|e| e.to_string())?;
             }
 
-            println!("Starting unbound with config:");
+            println!("Starting unbound with config at: {}", config_path);
             println!("{}", config_content);
 
             // Validate config first
