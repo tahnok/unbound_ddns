@@ -1279,7 +1279,9 @@ key = "test-key"
             .extension(ConnectInfo(
                 "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
             ))
-            .body(Body::from(r#"{"domain":"trailing.example.com.","ip":"203.0.113.99"}"#))
+            .body(Body::from(
+                r#"{"domain":"trailing.example.com.","ip":"203.0.113.99"}"#,
+            ))
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
