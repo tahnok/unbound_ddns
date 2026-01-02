@@ -238,11 +238,11 @@ async fn update_handler(
         None => extract_client_ip(&headers, &addr),
     };
 
-    // Validate the IP address
-    if ip.parse::<std::net::IpAddr>().is_err() {
+    // Validate the IP address (IPv4 only, as we only support A records, not AAAA)
+    if ip.parse::<std::net::Ipv4Addr>().is_err() {
         return UpdateResponse {
             success: false,
-            message: format!("Invalid IP address: {}", ip),
+            message: format!("Invalid IPv4 address: {}", ip),
         };
     }
 
@@ -1280,7 +1280,7 @@ key = "test-key"
             .await
             .unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
-        assert!(body_str.contains("Invalid IP address"));
+        assert!(body_str.contains("Invalid IPv4 address"));
     }
 
     #[tokio::test]
@@ -1318,11 +1318,11 @@ key = "test-key"
             .await
             .unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
-        assert!(body_str.contains("Invalid IP address"));
+        assert!(body_str.contains("Invalid IPv4 address"));
     }
 
     #[tokio::test]
-    async fn test_update_endpoint_valid_ipv6_address() {
+    async fn test_update_endpoint_ipv6_rejected() {
         use axum::body::Body;
         use axum::http::{Request, StatusCode};
         use tower::ServiceExt;
@@ -1350,24 +1350,13 @@ key = "test-key"
             .unwrap();
 
         let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
-        let status = response.status();
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
-
-        // Either succeeds or fails on unbound-control (expected in test environment)
-        assert!(
-            status == StatusCode::OK || body_str.contains("Failed to reload Unbound"),
-            "Unexpected response: {} - {}",
-            status,
-            body_str
-        );
-
-        // Verify config was updated with IPv6 address
-        let content = fs::read_to_string(unbound_file.path()).unwrap();
-        assert!(content.contains("local-data: \"ipv6.example.com IN A 2001:db8::1\""));
+        assert!(body_str.contains("Invalid IPv4 address"));
     }
 
     #[tokio::test]
@@ -1405,6 +1394,6 @@ key = "test-key"
             .await
             .unwrap();
         let body_str = String::from_utf8(body.to_vec()).unwrap();
-        assert!(body_str.contains("Invalid IP address"));
+        assert!(body_str.contains("Invalid IPv4 address"));
     }
 }
