@@ -1593,7 +1593,7 @@ key = "test-key"
     struct UnboundTestInstance {
         process: Child,
         port: u16,
-        config_file: NamedTempFile,
+        config_path: PathBuf,
     }
 
     impl UnboundTestInstance {
@@ -1606,45 +1606,52 @@ key = "test-key"
         /// # Returns
         /// An UnboundTestInstance that will automatically clean up when dropped
         async fn start(port: u16, domains: Option<&[(&str, &str)]>) -> Result<Self, String> {
-            // Create unbound config with custom port
-            let mut config_file = NamedTempFile::new().map_err(|e| e.to_string())?;
-            writeln!(config_file, "server:").map_err(|e| e.to_string())?;
-            writeln!(config_file, "  verbosity: 2").map_err(|e| e.to_string())?;
-            writeln!(config_file, "  interface: 127.0.0.1@{}", port).map_err(|e| e.to_string())?;
-            writeln!(config_file, "  port: {}", port).map_err(|e| e.to_string())?;
-            writeln!(config_file, "  access-control: 127.0.0.0/8 allow")
-                .map_err(|e| e.to_string())?;
-            writeln!(config_file, "  do-daemonize: no").map_err(|e| e.to_string())?;
-            writeln!(config_file, "  use-syslog: no").map_err(|e| e.to_string())?;
-            writeln!(config_file, "  logfile: \"\"").map_err(|e| e.to_string())?;
-            writeln!(config_file, "  do-not-query-localhost: no").map_err(|e| e.to_string())?;
-            writeln!(config_file, "  do-ip4: yes").map_err(|e| e.to_string())?;
-            writeln!(config_file, "  do-ip6: no").map_err(|e| e.to_string())?;
-            writeln!(config_file, "  do-udp: yes").map_err(|e| e.to_string())?;
-            writeln!(config_file, "  do-tcp: yes").map_err(|e| e.to_string())?;
-            writeln!(config_file, "  chroot: \"\"").map_err(|e| e.to_string())?;
-            writeln!(config_file, "  username: \"\"").map_err(|e| e.to_string())?;
-            writeln!(config_file, "  directory: \"\"").map_err(|e| e.to_string())?;
-            writeln!(config_file, "  pidfile: \"\"").map_err(|e| e.to_string())?;
+            // Create a writable config file in /tmp
+            let config_path = format!("/tmp/unbound-test-{}.conf", port);
+            let mut config_content = String::new();
+
+            // Build config content
+            config_content.push_str("server:\n");
+            config_content.push_str("  verbosity: 2\n");
+            config_content.push_str(&format!("  interface: 127.0.0.1@{}\n", port));
+            config_content.push_str(&format!("  port: {}\n", port));
+            config_content.push_str("  access-control: 127.0.0.0/8 allow\n");
+            config_content.push_str("  do-daemonize: no\n");
+            config_content.push_str("  use-syslog: no\n");
+            config_content.push_str("  logfile: \"\"\n");
+            config_content.push_str("  do-not-query-localhost: no\n");
+            config_content.push_str("  do-ip4: yes\n");
+            config_content.push_str("  do-ip6: no\n");
+            config_content.push_str("  do-udp: yes\n");
+            config_content.push_str("  do-tcp: yes\n");
+            config_content.push_str("  chroot: \"\"\n");
+            config_content.push_str("  username: \"\"\n");
+            config_content.push_str("  directory: \"\"\n");
+            config_content.push_str("  pidfile: \"\"\n");
 
             if let Some(domain_entries) = domains {
                 for (domain, ip) in domain_entries {
-                    writeln!(config_file, "  local-data: \"{} IN A {}\"", domain, ip)
-                        .map_err(|e| e.to_string())?;
+                    config_content.push_str(&format!("  local-data: \"{} IN A {}\"\n", domain, ip));
                 }
             }
 
-            config_file.flush().map_err(|e| e.to_string())?;
+            // Write config file to /tmp with world-readable permissions
+            fs::write(&config_path, &config_content).map_err(|e| e.to_string())?;
+
+            // Set permissions to be readable by all (chmod 644)
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let permissions = fs::Permissions::from_mode(0o644);
+                fs::set_permissions(&config_path, permissions).map_err(|e| e.to_string())?;
+            }
 
             println!("Starting unbound with config:");
-            let config_content = std::fs::read_to_string(config_file.path()).unwrap();
             println!("{}", config_content);
 
             // Validate config first
             println!("Validating unbound config with unbound-checkconf...");
-            let check_output = Command::new("unbound-checkconf")
-                .arg(config_file.path())
-                .output();
+            let check_output = Command::new("unbound-checkconf").arg(&config_path).output();
 
             match check_output {
                 Ok(output) if output.status.success() => {
@@ -1665,7 +1672,7 @@ key = "test-key"
                 .arg("-d")
                 .arg("-v")
                 .arg("-c")
-                .arg(config_file.path())
+                .arg(&config_path)
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
@@ -1722,13 +1729,13 @@ key = "test-key"
             Ok(UnboundTestInstance {
                 process,
                 port,
-                config_file,
+                config_path: PathBuf::from(config_path),
             })
         }
 
         /// Get the path to the config file
         fn config_path(&self) -> &Path {
-            self.config_file.path()
+            &self.config_path
         }
 
         /// Get the port unbound is running on
@@ -1742,6 +1749,8 @@ key = "test-key"
             // Kill the unbound process
             let _ = self.process.kill();
             let _ = self.process.wait();
+            // Clean up the config file
+            let _ = fs::remove_file(&self.config_path);
         }
     }
 
