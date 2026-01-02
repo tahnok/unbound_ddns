@@ -1611,12 +1611,21 @@ key = "test-key"
             writeln!(config_file, "server:").map_err(|e| e.to_string())?;
             writeln!(config_file, "  verbosity: 1").map_err(|e| e.to_string())?;
             writeln!(config_file, "  interface: 127.0.0.1@{}", port).map_err(|e| e.to_string())?;
+            writeln!(config_file, "  port: {}", port).map_err(|e| e.to_string())?;
             writeln!(config_file, "  access-control: 127.0.0.0/8 allow")
                 .map_err(|e| e.to_string())?;
             writeln!(config_file, "  do-daemonize: no").map_err(|e| e.to_string())?;
             writeln!(config_file, "  use-syslog: no").map_err(|e| e.to_string())?;
             writeln!(config_file, "  logfile: \"\"").map_err(|e| e.to_string())?;
             writeln!(config_file, "  do-not-query-localhost: no").map_err(|e| e.to_string())?;
+            writeln!(config_file, "  do-ip4: yes").map_err(|e| e.to_string())?;
+            writeln!(config_file, "  do-ip6: no").map_err(|e| e.to_string())?;
+            writeln!(config_file, "  do-udp: yes").map_err(|e| e.to_string())?;
+            writeln!(config_file, "  do-tcp: yes").map_err(|e| e.to_string())?;
+            writeln!(config_file, "  chroot: \"\"").map_err(|e| e.to_string())?;
+            writeln!(config_file, "  username: \"\"").map_err(|e| e.to_string())?;
+            writeln!(config_file, "  directory: \"\"").map_err(|e| e.to_string())?;
+            writeln!(config_file, "  pidfile: \"\"").map_err(|e| e.to_string())?;
 
             if let Some(domain_entries) = domains {
                 for (domain, ip) in domain_entries {
@@ -1627,18 +1636,22 @@ key = "test-key"
 
             config_file.flush().map_err(|e| e.to_string())?;
 
+            println!("Starting unbound with config:");
+            let config_content = std::fs::read_to_string(config_file.path()).unwrap();
+            println!("{}", config_content);
+
             // Start unbound
             let process = Command::new("unbound")
                 .arg("-d")
                 .arg("-c")
                 .arg(config_file.path())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
                 .spawn()
                 .map_err(|e| format!("Failed to start unbound: {}. Is unbound installed?", e))?;
 
-            // Give unbound a moment to start
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            // Give unbound more time to start and wait for it to be ready
+            tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
 
             Ok(UnboundTestInstance {
                 process,
@@ -1676,6 +1689,11 @@ key = "test-key"
     /// # Returns
     /// The IP address of the A record, or None if not found
     async fn query_dns_record(domain: &str, server_ip: IpAddr, server_port: u16) -> Option<IpAddr> {
+        println!(
+            "Querying DNS for {} at {}:{}",
+            domain, server_ip, server_port
+        );
+
         let nameserver = NameServerConfig {
             socket_addr: std::net::SocketAddr::new(server_ip, server_port),
             protocol: Protocol::Udp,
@@ -1689,8 +1707,15 @@ key = "test-key"
         let resolver = TokioAsyncResolver::tokio(resolver_config, ResolverOpts::default());
 
         match resolver.lookup_ip(domain).await {
-            Ok(lookup) => lookup.iter().next(),
-            Err(_) => None,
+            Ok(lookup) => {
+                let result = lookup.iter().next();
+                println!("DNS query result: {:?}", result);
+                result
+            }
+            Err(e) => {
+                println!("DNS query error: {}", e);
+                None
+            }
         }
     }
 
