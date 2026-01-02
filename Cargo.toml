@@ -16,3 +16,4 @@ subtle = "2.6.1"
 [dev-dependencies]
 tower = "0.5"
 tempfile = "3"
+hickory-resolver = "0.24"
