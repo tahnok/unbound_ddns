@@ -18,6 +18,10 @@ Clients make HTTP requests to the server (typically using `curl` from a cron job
 4. Updates the `local-data` entry in the Unbound configuration file for the specified domain (e.g., `local-data: "home.example.com. IN A 203.0.113.42"`)
 5. Issues a reload command to Unbound to apply the changes without downtime
 
+## Limitations
+
+- **IPv4 only**: Currently only IPv4 addresses are supported. The server creates DNS A records and will reject IPv6 addresses. IPv6/AAAA record support may be added in a future release.
+
 ## API
 
 ### Update DNS Record
