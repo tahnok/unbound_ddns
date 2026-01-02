@@ -15,6 +15,21 @@ use std::process::Command;
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
 
+/// Normalizes a domain name by removing the trailing dot if present.
+///
+/// In DNS, `example.com.` and `example.com` should be treated as the same domain.
+/// This function normalizes domain names for internal comparisons while we maintain
+/// proper FQDN format (with trailing dot) when writing to Unbound config.
+///
+/// # Arguments
+/// * `domain` - The domain name to normalize
+///
+/// # Returns
+/// The domain name without a trailing dot
+fn normalize_domain(domain: &str) -> String {
+    domain.trim_end_matches('.').to_string()
+}
+
 #[derive(Debug, Deserialize, Clone)]
 struct Config {
     unbound_config_path: PathBuf,
@@ -32,8 +47,13 @@ impl Config {
         let content =
             fs::read_to_string(path).map_err(|e| format!("Failed to read config file: {}", e))?;
 
-        let config: Config =
+        let mut config: Config =
             toml::from_str(&content).map_err(|e| format!("Failed to parse config file: {}", e))?;
+
+        // Normalize all domain names by removing trailing dots
+        for domain in &mut config.domains {
+            domain.name = normalize_domain(&domain.name);
+        }
 
         config.validate()?;
         Ok(config)
@@ -199,7 +219,7 @@ async fn update_handler(
     };
 
     // Parse the request based on Content-Type
-    let payload = match parse_update_request(&headers, &body) {
+    let mut payload = match parse_update_request(&headers, &body) {
         Ok(p) => p,
         Err(e) => {
             return UpdateResponse {
@@ -208,6 +228,9 @@ async fn update_handler(
             };
         }
     };
+
+    // Normalize the domain name by removing trailing dot
+    payload.domain = normalize_domain(&payload.domain);
 
     // Authenticate the request - use same error message for both invalid domain and invalid key
     // to prevent leaking information about which domains are valid
@@ -278,7 +301,8 @@ fn parse_update_request(headers: &HeaderMap, body: &Bytes) -> Result<UpdateReque
 }
 
 fn domain_exists_in_config(content: &str, domain: &str) -> bool {
-    let pattern = format!(r#"local-data:\s*"{}\s+IN\s+A\s+"#, regex::escape(domain));
+    // Match domain with or without trailing dot (\.? makes the dot optional)
+    let pattern = format!(r#"local-data:\s*"{}\.?\s+IN\s+A\s+"#, regex::escape(domain));
     if let Ok(re) = Regex::new(&pattern) {
         re.is_match(content)
     } else {
@@ -291,7 +315,7 @@ fn update_unbound_config(config_path: &PathBuf, domain: &str, ip: &str) -> Resul
     let content = fs::read_to_string(config_path)
         .map_err(|e| format!("Failed to read Unbound config: {}", e))?;
 
-    // Check if domain exists in the configuration
+    // Check if domain exists in the configuration (domain is already normalized without trailing dot)
     if !domain_exists_in_config(&content, domain) {
         return Err(format!(
             "Domain '{}' not found in Unbound config. Cannot update non-existent domain.",
@@ -299,12 +323,12 @@ fn update_unbound_config(config_path: &PathBuf, domain: &str, ip: &str) -> Resul
         ));
     }
 
-    // Create the new local-data entry
-    let new_entry = format!("local-data: \"{} IN A {}\"", domain, ip);
+    // Create the new local-data entry with proper FQDN format (trailing dot)
+    let new_entry = format!("local-data: \"{}. IN A {}\"", domain, ip);
 
-    // Pattern to match existing local-data entry for this domain
+    // Pattern to match existing local-data entry for this domain (with or without trailing dot)
     let pattern = format!(
-        r#"local-data:\s*"{}\s+IN\s+A\s+[^"]+""#,
+        r#"local-data:\s*"{}\.?\s+IN\s+A\s+[^"]+""#,
         regex::escape(domain)
     );
     let re = Regex::new(&pattern).map_err(|e| format!("Failed to compile regex: {}", e))?;
@@ -558,9 +582,9 @@ key = "secret-key-2"
         )
         .unwrap();
 
-        // Verify
+        // Verify - now writes with trailing dot (proper FQDN)
         let content = fs::read_to_string(unbound_file.path()).unwrap();
-        assert!(content.contains("local-data: \"test.example.com IN A 10.0.0.1\""));
+        assert!(content.contains("local-data: \"test.example.com. IN A 10.0.0.1\""));
         assert!(!content.contains("192.168.1.1"));
     }
 
@@ -687,9 +711,9 @@ key = "secret-key-2"
             body_str
         );
 
-        // Verify config was updated
+        // Verify config was updated with proper FQDN (trailing dot)
         let content = fs::read_to_string(unbound_file.path()).unwrap();
-        assert!(content.contains("local-data: \"test.example.com IN A 203.0.113.42\""));
+        assert!(content.contains("local-data: \"test.example.com. IN A 203.0.113.42\""));
     }
 
     #[tokio::test]
@@ -736,9 +760,9 @@ key = "secret-key-2"
             body_str
         );
 
-        // Verify config was updated with client IP
+        // Verify config was updated with client IP and proper FQDN (trailing dot)
         let content = fs::read_to_string(unbound_file.path()).unwrap();
-        assert!(content.contains("local-data: \"auto.example.com IN A 198.51.100.42\""));
+        assert!(content.contains("local-data: \"auto.example.com. IN A 198.51.100.42\""));
     }
 
     #[tokio::test]
@@ -787,9 +811,9 @@ key = "secret-key-2"
             body_str
         );
 
-        // Verify config was updated
+        // Verify config was updated with proper FQDN (trailing dot)
         let content = fs::read_to_string(unbound_file.path()).unwrap();
-        assert!(content.contains("local-data: \"json.example.com IN A 203.0.113.100\""));
+        assert!(content.contains("local-data: \"json.example.com. IN A 203.0.113.100\""));
     }
 
     #[tokio::test]
@@ -838,9 +862,9 @@ key = "secret-key-2"
             body_str
         );
 
-        // Verify config was updated with client IP
+        // Verify config was updated with client IP and proper FQDN (trailing dot)
         let content = fs::read_to_string(unbound_file.path()).unwrap();
-        assert!(content.contains("local-data: \"autoip.example.com IN A 198.51.100.99\""));
+        assert!(content.contains("local-data: \"autoip.example.com. IN A 198.51.100.99\""));
     }
 
     #[test]
@@ -1136,6 +1160,151 @@ key = "test-key"
         assert_eq!(ip, "203.0.113.1");
     }
 
+    // ============================================================================
+    // TRAILING DOT NORMALIZATION TESTS
+    // ============================================================================
+
+    #[test]
+    fn test_normalize_domain_with_trailing_dot() {
+        assert_eq!(normalize_domain("example.com."), "example.com");
+        assert_eq!(normalize_domain("foo.example.com."), "foo.example.com");
+    }
+
+    #[test]
+    fn test_normalize_domain_without_trailing_dot() {
+        assert_eq!(normalize_domain("example.com"), "example.com");
+        assert_eq!(normalize_domain("foo.example.com"), "foo.example.com");
+    }
+
+    #[test]
+    fn test_normalize_domain_multiple_trailing_dots() {
+        assert_eq!(normalize_domain("example.com.."), "example.com");
+        assert_eq!(normalize_domain("example.com..."), "example.com");
+    }
+
+    #[test]
+    fn test_domain_exists_in_config_with_trailing_dot() {
+        let config = "local-data: \"example.com. IN A 192.168.1.1\"";
+        assert!(domain_exists_in_config(config, "example.com"));
+    }
+
+    #[test]
+    fn test_domain_exists_in_config_without_trailing_dot() {
+        let config = "local-data: \"example.com IN A 192.168.1.1\"";
+        assert!(domain_exists_in_config(config, "example.com"));
+    }
+
+    #[test]
+    fn test_config_load_normalizes_trailing_dots() {
+        let unbound_file = create_unbound_config(Some(&[("test.example.com", "192.168.1.1")]));
+        let config_file = NamedTempFile::new().unwrap();
+
+        // Create config with trailing dots
+        let config_content = format!(
+            r#"unbound_config_path = "{}"
+
+[[domains]]
+name = "test.example.com."
+key = "test-key"
+"#,
+            unbound_file.path().display()
+        );
+        fs::write(config_file.path(), config_content).unwrap();
+
+        // Load config and verify trailing dot is removed
+        let result = Config::load(config_file.path().to_str().unwrap());
+        assert!(result.is_ok());
+        let config = result.unwrap();
+        assert_eq!(config.domains[0].name, "test.example.com");
+    }
+
+    #[test]
+    fn test_update_unbound_config_writes_trailing_dot() {
+        let unbound_file = create_unbound_config(Some(&[("test.example.com", "192.168.1.1")]));
+
+        // Update with normalized domain (no trailing dot)
+        update_unbound_config(
+            &unbound_file.path().to_path_buf(),
+            "test.example.com",
+            "10.0.0.1",
+        )
+        .unwrap();
+
+        // Verify the written config has trailing dot (proper FQDN)
+        let content = fs::read_to_string(unbound_file.path()).unwrap();
+        assert!(content.contains("local-data: \"test.example.com. IN A 10.0.0.1\""));
+    }
+
+    #[test]
+    fn test_update_unbound_config_handles_existing_trailing_dot() {
+        // Create config with trailing dot
+        let unbound_file = create_unbound_config(Some(&[("test.example.com.", "192.168.1.1")]));
+
+        // Update should work even though existing config has trailing dot
+        update_unbound_config(
+            &unbound_file.path().to_path_buf(),
+            "test.example.com",
+            "10.0.0.1",
+        )
+        .unwrap();
+
+        // Verify the updated config has trailing dot
+        let content = fs::read_to_string(unbound_file.path()).unwrap();
+        assert!(content.contains("local-data: \"test.example.com. IN A 10.0.0.1\""));
+    }
+
+    #[tokio::test]
+    async fn test_update_endpoint_with_trailing_dot_in_domain() {
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+
+        let unbound_file = create_unbound_config(Some(&[("trailing.example.com", "192.168.1.1")]));
+
+        let config = Arc::new(create_test_config(
+            Some(unbound_file.path().to_path_buf()),
+            Some(&[("trailing.example.com", "trailing-key")]),
+        ));
+
+        let app = Router::new()
+            .route("/update", post(update_handler))
+            .with_state(config);
+
+        // Send request with trailing dot in domain name
+        let request = Request::builder()
+            .method("POST")
+            .uri("/update")
+            .header("content-type", "application/json")
+            .header("authorization", "Bearer trailing-key")
+            .extension(ConnectInfo(
+                "127.0.0.1:12345".parse::<SocketAddr>().unwrap(),
+            ))
+            .body(Body::from(
+                r#"{"domain":"trailing.example.com.","ip":"203.0.113.99"}"#,
+            ))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+
+        let status = response.status();
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body_str = String::from_utf8(body.to_vec()).unwrap();
+
+        // Either succeeds or fails on unbound-control (expected in test environment)
+        assert!(
+            status == StatusCode::OK || body_str.contains("Failed to reload Unbound"),
+            "Unexpected response: {} - {}",
+            status,
+            body_str
+        );
+
+        // Verify config was updated with proper FQDN (trailing dot)
+        let content = fs::read_to_string(unbound_file.path()).unwrap();
+        assert!(content.contains("local-data: \"trailing.example.com. IN A 203.0.113.99\""));
+    }
+
     #[tokio::test]
     async fn test_update_endpoint_with_x_forwarded_for() {
         use axum::body::Body;
@@ -1183,7 +1352,7 @@ key = "test-key"
 
         // Verify config was updated with the IP from X-Forwarded-For, not the connection IP
         let content = fs::read_to_string(unbound_file.path()).unwrap();
-        assert!(content.contains("local-data: \"proxy.example.com IN A 203.0.113.50\""));
+        assert!(content.contains("local-data: \"proxy.example.com. IN A 203.0.113.50\""));
         assert!(!content.contains("192.168.1.100")); // Should NOT use the proxy IP
     }
 
@@ -1232,8 +1401,8 @@ key = "test-key"
             body_str
         );
 
-        // Verify config was updated with the IP from X-Real-IP
+        // Verify config was updated with the IP from X-Real-IP and proper FQDN (trailing dot)
         let content = fs::read_to_string(unbound_file.path()).unwrap();
-        assert!(content.contains("local-data: \"realip.example.com IN A 203.0.113.75\""));
+        assert!(content.contains("local-data: \"realip.example.com. IN A 203.0.113.75\""));
     }
 }
