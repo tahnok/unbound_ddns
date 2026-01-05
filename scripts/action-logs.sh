@@ -9,14 +9,6 @@ CHECK_RUN_ID=""
 REPO=""
 DOWNLOAD=false
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-NC='\033[0m' # No Color
-
 usage() {
     cat << EOF
 Usage: $0 [OPTIONS] <check-run-id>
@@ -37,8 +29,7 @@ EXAMPLES:
     $0 --download 12345678         # Download logs as zip file
 
 NOTE:
-    The check run ID can be obtained from the ci-poll.sh script output
-    when using the --verbose flag.
+    The check run ID can be obtained from the ci-poll.sh script output.
 EOF
     exit 0
 }
@@ -70,7 +61,7 @@ done
 
 # Validate required arguments
 if [[ -z "$CHECK_RUN_ID" ]]; then
-    echo -e "${RED}Error: check-run-id is required${NC}" >&2
+    echo "Error: check-run-id is required" >&2
     echo ""
     usage
 fi
@@ -148,7 +139,7 @@ download_workflow_logs() {
     local run_id=$2
     local output_file="logs-run-${run_id}.zip"
 
-    echo -e "${BLUE}Downloading logs to ${output_file}...${NC}"
+    echo "Downloading logs to ${output_file}..."
 
     curl -L \
         -H "Accept: application/vnd.github+json" \
@@ -156,37 +147,24 @@ download_workflow_logs() {
         -o "$output_file"
 
     if [[ -f "$output_file" ]]; then
-        echo -e "${GREEN}Downloaded logs to: ${output_file}${NC}"
+        echo "Downloaded logs to: ${output_file}"
     else
-        echo -e "${RED}Failed to download logs${NC}" >&2
+        echo "Failed to download logs" >&2
         exit 1
     fi
 }
 
-# Display logs with formatting
+# Display logs
 display_logs() {
     local logs=$1
     local job_name=$2
 
-    echo -e "\n${CYAN}═══════════════════════════════════════════════════${NC}"
-    echo -e "${CYAN}Logs for: ${job_name}${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════════════════${NC}\n"
-
-    # Check if logs contain timestamp format
-    if echo "$logs" | grep -q '^[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}T'; then
-        # Format timestamped logs
-        echo "$logs" | while IFS= read -r line; do
-            if [[ "$line" =~ ^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]+Z)\ (.+)$ ]]; then
-                timestamp="${BASH_REMATCH[1]}"
-                message="${BASH_REMATCH[2]}"
-                echo -e "${YELLOW}${timestamp}${NC} ${message}"
-            else
-                echo "$line"
-            fi
-        done
-    else
-        echo "$logs"
-    fi
+    echo ""
+    echo "==================================================="
+    echo "Logs for: ${job_name}"
+    echo "==================================================="
+    echo ""
+    echo "$logs"
 }
 
 # Main function
@@ -199,8 +177,8 @@ main() {
 
     repo_info=$(get_repo_info)
 
-    echo -e "${BLUE}Repository: ${repo_info}${NC}"
-    echo -e "${BLUE}Check Run ID: ${CHECK_RUN_ID}${NC}"
+    echo "Repository: ${repo_info}"
+    echo "Check Run ID: ${CHECK_RUN_ID}"
     echo ""
 
     # Fetch check run details
@@ -211,7 +189,7 @@ main() {
     if echo "$check_run_json" | jq -e '.message' > /dev/null 2>&1; then
         local error_msg
         error_msg=$(echo "$check_run_json" | jq -r '.message')
-        echo -e "${RED}API Error: $error_msg${NC}" >&2
+        echo "API Error: $error_msg" >&2
         exit 1
     fi
 
@@ -221,20 +199,20 @@ main() {
     check_name=$(echo "$check_run_json" | jq -r '.name')
     check_status=$(echo "$check_run_json" | jq -r '.status')
 
-    echo -e "Check Name: ${GREEN}${check_name}${NC}"
-    echo -e "Status: ${check_status}"
+    echo "Check Name: ${check_name}"
+    echo "Status: ${check_status}"
     echo ""
 
     # Get workflow run ID
     run_id=$(get_workflow_run_id "$check_run_json")
 
     if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-        echo -e "${RED}Error: Could not determine workflow run ID from check run${NC}" >&2
+        echo "Error: Could not determine workflow run ID from check run" >&2
         echo "This check run may not be associated with a GitHub Actions workflow." >&2
         exit 1
     fi
 
-    echo -e "Workflow Run ID: ${run_id}"
+    echo "Workflow Run ID: ${run_id}"
     echo ""
 
     # Check if download mode
@@ -251,23 +229,24 @@ main() {
     if echo "$jobs_json" | jq -e '.message' > /dev/null 2>&1; then
         local error_msg
         error_msg=$(echo "$jobs_json" | jq -r '.message')
-        echo -e "${RED}API Error: $error_msg${NC}" >&2
+        echo "API Error: $error_msg" >&2
         exit 1
     fi
 
     job_count=$(echo "$jobs_json" | jq -r '.total_count')
 
     if [[ "$job_count" == "0" ]]; then
-        echo -e "${YELLOW}No jobs found for this workflow run${NC}"
+        echo "No jobs found for this workflow run"
         exit 0
     fi
 
-    echo -e "Found ${job_count} job(s)\n"
+    echo "Found ${job_count} job(s)"
+    echo ""
 
     # Fetch and display logs for each job
     echo "$jobs_json" | jq -r '.jobs[] | "\(.id)|\(.name)|\(.status)"' | \
     while IFS='|' read -r job_id job_name job_status; do
-        echo -e "${BLUE}Fetching logs for job: ${job_name} (${job_status})...${NC}"
+        echo "Fetching logs for job: ${job_name} (${job_status})..."
 
         local logs
         logs=$(fetch_job_logs "$repo_info" "$job_id")
@@ -275,11 +254,13 @@ main() {
         if [[ -n "$logs" ]]; then
             display_logs "$logs" "$job_name"
         else
-            echo -e "${YELLOW}No logs available for this job yet${NC}\n"
+            echo "No logs available for this job yet"
+            echo ""
         fi
     done
 
-    echo -e "\n${GREEN}✓ Logs fetch complete${NC}"
+    echo ""
+    echo "Logs fetch complete"
 }
 
 main

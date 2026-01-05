@@ -21,9 +21,6 @@ A bash script to poll GitHub Actions CI/CD checks and wait for completion.
 
 # Custom polling interval and timeout
 ./scripts/ci-poll.sh --interval 10 --timeout 300
-
-# Show check run IDs (for use with action-logs.sh)
-./scripts/ci-poll.sh --verbose
 ```
 
 ### Options
@@ -33,17 +30,16 @@ A bash script to poll GitHub Actions CI/CD checks and wait for completion.
 - `--interval <sec>` - Polling interval in seconds (default: 30)
 - `--timeout <sec>` - Timeout in seconds (default: 600)
 - `--once` - Check once without polling
-- `--verbose` - Show check run IDs (for use with action-logs.sh)
 - `-h, --help` - Show help message
 
 ### Features
 
 - Color-coded output (green for success, red for failure, blue for in-progress)
 - Status symbols (✓ success, ✗ failure, ⏵ in-progress, ⏳ queued)
+- Displays check run IDs (for use with action-logs.sh)
 - Direct links to failed check details
 - Configurable polling interval and timeout
 - Exit codes: 0 for success, 1 for failure, 2 for timeout
-- Optional verbose mode to display check run IDs
 
 ### Requirements
 
@@ -78,20 +74,19 @@ A bash script to fetch logs for a GitHub Actions check run.
 ### Features
 
 - Fetches and displays logs for GitHub Actions check runs
-- Color-coded output with timestamps
 - Supports multiple jobs within a workflow run
 - Can download logs as a zip file for offline viewing
 - Auto-detects repository from git remote
 
 ### Getting Check Run IDs
 
-Use the `ci-poll.sh` script with the `--verbose` flag to get check run IDs:
+Use the `ci-poll.sh` script to get check run IDs:
 
 ```bash
-./scripts/ci-poll.sh --verbose
+./scripts/ci-poll.sh
 ```
 
-This will display the check run ID for each check, which can then be used with `action-logs.sh`.
+The script will display the check run ID for each check, which can then be used with `action-logs.sh`.
 
 ### Requirements
 

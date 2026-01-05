@@ -10,7 +10,6 @@ TIMEOUT=600
 ONCE=false
 COMMIT=""
 PR=""
-VERBOSE=false
 
 # Colors
 RED='\033[0;31m'
@@ -38,7 +37,6 @@ OPTIONS:
     --interval <sec>    Polling interval in seconds (default: 30)
     --timeout <sec>     Timeout in seconds (default: 600)
     --once              Check once without polling
-    --verbose           Show check run IDs (for use with action-logs.sh)
     -h, --help          Show this help message
 
 EXAMPLES:
@@ -72,10 +70,6 @@ while [[ $# -gt 0 ]]; do
             ;;
         --once)
             ONCE=true
-            shift
-            ;;
-        --verbose)
-            VERBOSE=true
             shift
             ;;
         -h|--help)
@@ -220,9 +214,7 @@ display_checks() {
             printf " (${status})"
         fi
 
-        if [[ "$VERBOSE" == "true" ]]; then
-            printf "\n  ${BLUE}ID: %s${NC}" "$id"
-        fi
+        printf "\n  ${BLUE}ID: %s${NC}" "$id"
 
         if [[ "$status" == "completed" && "$conclusion" != "success" && "$conclusion" != "skipped" ]]; then
             printf "\n  ${BLUE}→ %s${NC}" "$url"
