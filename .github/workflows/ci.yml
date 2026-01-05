@@ -67,13 +67,8 @@ jobs:
           path: target
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Install unbound
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y unbound
-
-      - name: Run integration tests
-        run: cargo test test_integration_with_real_unbound_and_dns_query -- --ignored --nocapture
+      - name: Run Docker-based integration tests
+        run: bash tests/docker/run-integration-test.sh
 
   fmt:
     name: Format
@@ -131,19 +126,14 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
-      - name: Install unbound
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y unbound
-
       - name: Generate coverage
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info -- --include-ignored
+        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
 
       - name: Generate HTML report
-        run: cargo llvm-cov --all-features --workspace --html -- --include-ignored
+        run: cargo llvm-cov --all-features --workspace --html
 
       - name: Check coverage threshold
-        run: cargo llvm-cov --all-features --workspace --fail-under-lines 90 -- --include-ignored
+        run: cargo llvm-cov --all-features --workspace --fail-under-lines 90
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4

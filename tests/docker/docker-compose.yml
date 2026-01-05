@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  unbound:
+    build: .
+    container_name: unbound-ddns-test
+    ports:
+      - "15353:15353/udp"
+      - "15353:15353/tcp"
+    volumes:
+      - ./unbound-test.conf:/test-config/unbound.conf:ro
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge
