@@ -1606,15 +1606,18 @@ key = "test-key"
         /// # Returns
         /// An UnboundTestInstance that will automatically clean up when dropped
         async fn start(port: u16, domains: Option<&[(&str, &str)]>) -> Result<Self, String> {
-            // Create config file in current working directory (accessible to subprocesses)
-            let config_path = format!("unbound-test-{}.conf", port);
+            // Create config file in current working directory with absolute path
+            let config_filename = format!("unbound-test-{}.conf", port);
+            let config_path = std::env::current_dir()
+                .map_err(|e| e.to_string())?
+                .join(&config_filename);
+
             let mut config_content = String::new();
 
             // Build config content
             config_content.push_str("server:\n");
             config_content.push_str("  verbosity: 2\n");
             config_content.push_str(&format!("  interface: 127.0.0.1@{}\n", port));
-            config_content.push_str(&format!("  port: {}\n", port));
             config_content.push_str("  access-control: 127.0.0.0/8 allow\n");
             config_content.push_str("  do-daemonize: no\n");
             config_content.push_str("  use-syslog: no\n");
@@ -1646,7 +1649,7 @@ key = "test-key"
                 fs::set_permissions(&config_path, permissions).map_err(|e| e.to_string())?;
             }
 
-            println!("Starting unbound with config at: {}", config_path);
+            println!("Starting unbound with config at: {}", config_path.display());
             println!("{}", config_content);
 
             // Validate config first
@@ -1729,7 +1732,7 @@ key = "test-key"
             Ok(UnboundTestInstance {
                 process,
                 port,
-                config_path: PathBuf::from(config_path),
+                config_path,
             })
         }
 
