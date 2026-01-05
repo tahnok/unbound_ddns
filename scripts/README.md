@@ -21,6 +21,9 @@ A bash script to poll GitHub Actions CI/CD checks and wait for completion.
 
 # Custom polling interval and timeout
 ./scripts/ci-poll.sh --interval 10 --timeout 300
+
+# Show check run IDs (for use with action-logs.sh)
+./scripts/ci-poll.sh --verbose
 ```
 
 ### Options
@@ -30,6 +33,7 @@ A bash script to poll GitHub Actions CI/CD checks and wait for completion.
 - `--interval <sec>` - Polling interval in seconds (default: 30)
 - `--timeout <sec>` - Timeout in seconds (default: 600)
 - `--once` - Check once without polling
+- `--verbose` - Show check run IDs (for use with action-logs.sh)
 - `-h, --help` - Show help message
 
 ### Features
@@ -39,9 +43,58 @@ A bash script to poll GitHub Actions CI/CD checks and wait for completion.
 - Direct links to failed check details
 - Configurable polling interval and timeout
 - Exit codes: 0 for success, 1 for failure, 2 for timeout
+- Optional verbose mode to display check run IDs
 
 ### Requirements
 
 - `curl` - for API requests
 - `jq` - for JSON parsing
 - `git` - to determine repository and commit info
+
+## action-logs.sh
+
+A bash script to fetch logs for a GitHub Actions check run.
+
+### Usage
+
+```bash
+# Fetch logs for a specific check run
+./scripts/action-logs.sh 12345678
+
+# Fetch logs for a specific repository
+./scripts/action-logs.sh --repo owner/repo 12345678
+
+# Download logs as a zip file
+./scripts/action-logs.sh --download 12345678
+```
+
+### Options
+
+- `<check-run-id>` - The ID of the check run to fetch logs for (required)
+- `--repo <owner/repo>` - Specify repository (default: auto-detect from git)
+- `--download` - Download logs as zip file instead of displaying
+- `-h, --help` - Show help message
+
+### Features
+
+- Fetches and displays logs for GitHub Actions check runs
+- Color-coded output with timestamps
+- Supports multiple jobs within a workflow run
+- Can download logs as a zip file for offline viewing
+- Auto-detects repository from git remote
+
+### Getting Check Run IDs
+
+Use the `ci-poll.sh` script with the `--verbose` flag to get check run IDs:
+
+```bash
+./scripts/ci-poll.sh --verbose
+```
+
+This will display the check run ID for each check, which can then be used with `action-logs.sh`.
+
+### Requirements
+
+- `curl` - for API requests
+- `jq` - for JSON parsing
+- `git` - to determine repository info (optional, can use --repo)
