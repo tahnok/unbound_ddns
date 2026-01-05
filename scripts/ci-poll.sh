@@ -199,8 +199,8 @@ display_checks() {
         return 0
     fi
 
-    echo "$json" | jq -r '.check_runs[] | "\(.name)|\(.status)|\(.conclusion // "null")|\(.html_url)"' | \
-    while IFS='|' read -r name status conclusion url; do
+    echo "$json" | jq -r '.check_runs[] | "\(.id)|\(.name)|\(.status)|\(.conclusion // "null")|\(.html_url)"' | \
+    while IFS='|' read -r id name status conclusion url; do
         local symbol
         local color
         symbol=$(get_symbol "$status" "$conclusion")
@@ -213,6 +213,8 @@ display_checks() {
         else
             printf " (${status})"
         fi
+
+        printf "\n  ${BLUE}ID: %s${NC}" "$id"
 
         if [[ "$status" == "completed" && "$conclusion" != "success" && "$conclusion" != "skipped" ]]; then
             printf "\n  ${BLUE}→ %s${NC}" "$url"
