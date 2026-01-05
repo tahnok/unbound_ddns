@@ -1631,6 +1631,8 @@ key = "test-key"
             config_content.push_str("  username: \"\"\n");
             config_content.push_str("  directory: \"\"\n");
             config_content.push_str("  pidfile: \"\"\n");
+            config_content.push_str("  auto-trust-anchor-file: \"\"\n");
+            config_content.push_str("  root-hints: \"\"\n");
 
             if let Some(domain_entries) = domains {
                 for (domain, ip) in domain_entries {
@@ -1705,6 +1707,9 @@ key = "test-key"
                 }
                 Ok(None) => {
                     println!("Unbound process is running (PID: {:?})", process.id());
+
+                    // Try to peek at output for debugging without consuming it
+                    println!("Checking if unbound produced any early output...");
                 }
                 Err(e) => {
                     return Err(format!("Failed to check unbound process status: {}", e));
