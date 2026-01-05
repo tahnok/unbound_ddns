@@ -206,6 +206,45 @@ key = "secret-key-3"
   - `name` - The domain name that can be updated
   - `key` - The secret key required to authenticate updates for this domain
 
+## Testing
+
+The project includes comprehensive unit tests and integration tests.
+
+### Running Unit Tests
+
+Run the standard test suite with:
+
+```bash
+cargo test
+```
+
+This will run all unit and integration tests except those marked as ignored.
+
+### Running the Integration Test
+
+The project includes a comprehensive integration test that:
+1. Starts an actual unbound instance on a non-standard port
+2. Starts the server with test configuration
+3. Queries DNS to verify the initial state
+4. Makes an API request to update a DNS record
+5. Verifies the DNS record was updated
+
+**Requirements:**
+- `unbound` must be installed and available in your PATH
+- The test uses port 15353 (non-privileged) to avoid requiring root access
+
+**To run the integration test:**
+
+```bash
+# Run only the integration test
+cargo test test_integration_with_real_unbound_and_dns_query -- --ignored --nocapture
+
+# Or run all ignored tests
+cargo test -- --ignored
+```
+
+**Note:** The integration test is marked as `#[ignore]` by default to keep the standard test suite fast. However, the GitHub Actions CI workflow automatically installs unbound and runs the integration test on every push and pull request.
+
 ## License
 
 MIT
