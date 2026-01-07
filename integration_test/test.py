@@ -9,7 +9,7 @@ This script tests the complete flow:
 
 import sys
 import time
-import socket
+import subprocess
 import requests
 from typing import Optional
 
@@ -78,7 +78,7 @@ def print_info(message: str):
 
 def dns_query(domain: str, server: str = DNS_SERVER, port: int = DNS_PORT) -> Optional[str]:
     """
-    Query DNS for A record and return the IP address.
+    Query DNS for A record and return the IP address using dig.
 
     Args:
         domain: Domain name to query
@@ -89,77 +89,24 @@ def dns_query(domain: str, server: str = DNS_SERVER, port: int = DNS_PORT) -> Op
         IP address string or None if not found
     """
     try:
-        # Create a simple DNS query for A record
-        # Using getaddrinfo with the specific DNS server requires more complex setup
-        # For simplicity, we'll use socket.gethostbyname which uses system resolver
-        # In Docker, we'll configure the container to use localhost as resolver
+        import subprocess
 
-        # Create a socket and connect to our DNS server
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(5)
+        # Use dig to query DNS
+        cmd = ['dig', f'@{server}', '-p', str(port), domain, 'A', '+short']
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
 
-        # Build a simple DNS query packet
-        # This is a minimal A record query
-        import struct
-        import random
-
-        # Transaction ID
-        tid = random.randint(0, 65535)
-
-        # Flags: standard query
-        flags = 0x0100
-
-        # Counts
-        qdcount = 1  # One question
-        ancount = 0
-        nscount = 0
-        arcount = 0
-
-        # Build header
-        header = struct.pack('!HHHHHH', tid, flags, qdcount, ancount, nscount, arcount)
-
-        # Build question section
-        question = b''
-        for part in domain.split('.'):
-            question += struct.pack('B', len(part)) + part.encode()
-        question += b'\x00'  # End of domain name
-        question += struct.pack('!HH', 1, 1)  # Type A, Class IN
-
-        query = header + question
-
-        # Send query
-        sock.sendto(query, (server, port))
-
-        # Receive response
-        data, _ = sock.recvfrom(512)
-        sock.close()
-
-        # Parse response
-        # Skip header (12 bytes)
-        offset = 12
-
-        # Skip question section
-        while data[offset] != 0:
-            offset += 1
-        offset += 5  # Skip null byte and QTYPE/QCLASS
-
-        # Parse answer section
-        # Skip name (usually a pointer)
-        if data[offset] & 0xC0 == 0xC0:
-            offset += 2
-        else:
-            while data[offset] != 0:
-                offset += 1
-            offset += 1
-
-        # Read type, class, TTL, and data length
-        rtype, rclass, ttl, rdlength = struct.unpack('!HHIH', data[offset:offset+10])
-        offset += 10
-
-        if rtype == 1 and rdlength == 4:  # A record
-            ip_bytes = data[offset:offset+4]
-            ip_address = '.'.join(str(b) for b in ip_bytes)
-            return ip_address
+        if result.returncode == 0 and result.stdout.strip():
+            # dig returns the IP address on a line by itself
+            ip = result.stdout.strip().split('\n')[0]
+            # Validate it's an IP address
+            parts = ip.split('.')
+            if len(parts) == 4 and all(p.isdigit() and 0 <= int(p) <= 255 for p in parts):
+                return ip
 
         return None
 

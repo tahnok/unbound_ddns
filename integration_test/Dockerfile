@@ -19,6 +19,7 @@ RUN apt-get update && \
     apt-get install -y \
     unbound \
     dns-root-data \
+    dnsutils \
     curl \
     python3 \
     python3-requests \
