@@ -1,6 +1,7 @@
 # Multi-stage Dockerfile for integration testing
 # Stage 1: Build the Rust application
-FROM rust:1.83-bookworm AS builder
+# Use Rust 1.85+ which supports edition 2024
+FROM rust:1.85-bookworm AS builder
 
 WORKDIR /build
 
