@@ -1,3 +1,9 @@
+---
+name: github-ci-poll
+description: Poll GitHub CI checks and report status for commits or pull requests when user asks to check CI, poll checks, or wait for builds to complete
+allowed-tools: Bash, Read, Grep
+---
+
 # GitHub CI Poll
 
 This skill polls GitHub CI/CD checks and reports their status.
