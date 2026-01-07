@@ -136,10 +136,10 @@ fetch_job_logs() {
     local job_id=$2
 
     if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-        curl -s -H "Authorization: token $GITHUB_TOKEN" \
+        curl -sL -H "Authorization: token $GITHUB_TOKEN" \
             "https://api.github.com/repos/$repo_info/actions/jobs/$job_id/logs"
     else
-        curl -s "https://api.github.com/repos/$repo_info/actions/jobs/$job_id/logs"
+        curl -sL "https://api.github.com/repos/$repo_info/actions/jobs/$job_id/logs"
     fi
 }
 
