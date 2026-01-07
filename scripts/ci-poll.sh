@@ -112,8 +112,14 @@ get_commit_sha() {
         local repo_info
         repo_info=$(get_repo_info)
         echo "Fetching HEAD SHA for PR #$PR..." >&2
-        curl -s "https://api.github.com/repos/$repo_info/pulls/$PR" | \
-            jq -r '.head.sha' | head -1
+        if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+            curl -s -H "Authorization: token $GITHUB_TOKEN" \
+                "https://api.github.com/repos/$repo_info/pulls/$PR" | \
+                jq -r '.head.sha' | head -1
+        else
+            curl -s "https://api.github.com/repos/$repo_info/pulls/$PR" | \
+                jq -r '.head.sha' | head -1
+        fi
     else
         git rev-parse HEAD
     fi
@@ -124,7 +130,12 @@ fetch_checks() {
     local repo_info=$1
     local sha=$2
 
-    curl -s "https://api.github.com/repos/$repo_info/commits/$sha/check-runs"
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$repo_info/commits/$sha/check-runs"
+    else
+        curl -s "https://api.github.com/repos/$repo_info/commits/$sha/check-runs"
+    fi
 }
 
 # Get status symbol

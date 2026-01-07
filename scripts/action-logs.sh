@@ -98,21 +98,21 @@ fetch_check_run() {
     local repo_info=$1
     local check_run_id=$2
 
-    curl -s "https://api.github.com/repos/$repo_info/check-runs/$check_run_id"
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$repo_info/check-runs/$check_run_id"
+    else
+        curl -s "https://api.github.com/repos/$repo_info/check-runs/$check_run_id"
+    fi
 }
 
 # Get workflow run ID from check run
 get_workflow_run_id() {
     local check_run_json=$1
 
-    # Try to extract run_id from check_suite
+    # Extract run_id from details_url (this is the workflow run ID)
     local run_id
-    run_id=$(echo "$check_run_json" | jq -r '.check_suite.id // empty')
-
-    if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-        # Fallback: extract from details_url
-        run_id=$(echo "$check_run_json" | jq -r '.details_url' | grep -oP 'runs/\K[0-9]+' || echo "")
-    fi
+    run_id=$(echo "$check_run_json" | jq -r '.details_url' | grep -oP 'runs/\K[0-9]+' || echo "")
 
     echo "$run_id"
 }
@@ -122,7 +122,12 @@ list_jobs() {
     local repo_info=$1
     local run_id=$2
 
-    curl -s "https://api.github.com/repos/$repo_info/actions/runs/$run_id/jobs"
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$repo_info/actions/runs/$run_id/jobs"
+    else
+        curl -s "https://api.github.com/repos/$repo_info/actions/runs/$run_id/jobs"
+    fi
 }
 
 # Fetch job logs
@@ -130,7 +135,12 @@ fetch_job_logs() {
     local repo_info=$1
     local job_id=$2
 
-    curl -s "https://api.github.com/repos/$repo_info/actions/jobs/$job_id/logs"
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        curl -sL -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$repo_info/actions/jobs/$job_id/logs"
+    else
+        curl -sL "https://api.github.com/repos/$repo_info/actions/jobs/$job_id/logs"
+    fi
 }
 
 # Download workflow run logs
@@ -141,10 +151,18 @@ download_workflow_logs() {
 
     echo "Downloading logs to ${output_file}..."
 
-    curl -L \
-        -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/repos/$repo_info/actions/runs/$run_id/logs" \
-        -o "$output_file"
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        curl -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$repo_info/actions/runs/$run_id/logs" \
+            -o "$output_file"
+    else
+        curl -L \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$repo_info/actions/runs/$run_id/logs" \
+            -o "$output_file"
+    fi
 
     if [[ -f "$output_file" ]]; then
         echo "Downloaded logs to: ${output_file}"
