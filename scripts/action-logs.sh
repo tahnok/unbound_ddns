@@ -105,14 +105,9 @@ fetch_check_run() {
 get_workflow_run_id() {
     local check_run_json=$1
 
-    # Try to extract run_id from check_suite
+    # Extract run_id from details_url (this is the workflow run ID)
     local run_id
-    run_id=$(echo "$check_run_json" | jq -r '.check_suite.id // empty')
-
-    if [[ -z "$run_id" || "$run_id" == "null" ]]; then
-        # Fallback: extract from details_url
-        run_id=$(echo "$check_run_json" | jq -r '.details_url' | grep -oP 'runs/\K[0-9]+' || echo "")
-    fi
+    run_id=$(echo "$check_run_json" | jq -r '.details_url' | grep -oP 'runs/\K[0-9]+' || echo "")
 
     echo "$run_id"
 }
