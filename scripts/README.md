@@ -47,6 +47,21 @@ A bash script to poll GitHub Actions CI/CD checks and wait for completion.
 - `jq` - for JSON parsing
 - `git` - to determine repository and commit info
 
+### Authentication
+
+For private repositories or to access additional features, you can set the `GITHUB_TOKEN` environment variable:
+
+```bash
+export GITHUB_TOKEN="your_github_token_here"
+./scripts/ci-poll.sh
+```
+
+To generate a GitHub token:
+1. Go to GitHub Settings → Developer settings → Personal access tokens → Tokens (classic)
+2. Click "Generate new token"
+3. Select scopes: `repo` (for private repos) or `public_repo` (for public repos only)
+4. Copy the token and set it as an environment variable
+
 ## action-logs.sh
 
 A bash script to fetch logs for a GitHub Actions check run.
@@ -93,3 +108,6 @@ The script will display the check run ID for each check, which can then be used 
 - `curl` - for API requests
 - `jq` - for JSON parsing
 - `git` - to determine repository info (optional, can use --repo)
+- `GITHUB_TOKEN` environment variable - **Required** for downloading logs (see Authentication section above)
+
+**Note:** GitHub requires authentication to download workflow logs, even for public repositories. You must set the `GITHUB_TOKEN` environment variable for this script to work.

@@ -98,7 +98,12 @@ fetch_check_run() {
     local repo_info=$1
     local check_run_id=$2
 
-    curl -s "https://api.github.com/repos/$repo_info/check-runs/$check_run_id"
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$repo_info/check-runs/$check_run_id"
+    else
+        curl -s "https://api.github.com/repos/$repo_info/check-runs/$check_run_id"
+    fi
 }
 
 # Get workflow run ID from check run
@@ -117,7 +122,12 @@ list_jobs() {
     local repo_info=$1
     local run_id=$2
 
-    curl -s "https://api.github.com/repos/$repo_info/actions/runs/$run_id/jobs"
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$repo_info/actions/runs/$run_id/jobs"
+    else
+        curl -s "https://api.github.com/repos/$repo_info/actions/runs/$run_id/jobs"
+    fi
 }
 
 # Fetch job logs
@@ -125,7 +135,12 @@ fetch_job_logs() {
     local repo_info=$1
     local job_id=$2
 
-    curl -s "https://api.github.com/repos/$repo_info/actions/jobs/$job_id/logs"
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$repo_info/actions/jobs/$job_id/logs"
+    else
+        curl -s "https://api.github.com/repos/$repo_info/actions/jobs/$job_id/logs"
+    fi
 }
 
 # Download workflow run logs
@@ -136,10 +151,18 @@ download_workflow_logs() {
 
     echo "Downloading logs to ${output_file}..."
 
-    curl -L \
-        -H "Accept: application/vnd.github+json" \
-        "https://api.github.com/repos/$repo_info/actions/runs/$run_id/logs" \
-        -o "$output_file"
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        curl -L \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$repo_info/actions/runs/$run_id/logs" \
+            -o "$output_file"
+    else
+        curl -L \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$repo_info/actions/runs/$run_id/logs" \
+            -o "$output_file"
+    fi
 
     if [[ -f "$output_file" ]]; then
         echo "Downloaded logs to: ${output_file}"
