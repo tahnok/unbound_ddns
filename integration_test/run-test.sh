@@ -52,12 +52,10 @@ else
 fi
 
 # Step 2: Start container
+# Note: We don't expose ports to the host since tests run inside the container
 echo -e "${BLUE}Step 2: Starting container...${NC}"
 docker run -d \
     --name "${CONTAINER_NAME}" \
-    -p 3000:3000 \
-    -p 53:53/udp \
-    -p 53:53/tcp \
     "${IMAGE_NAME}"
 
 if [ $? -eq 0 ]; then
