@@ -7,3 +7,5 @@
 - [x] Add example systemd unit along with better install instructions
 - [x] explore test coverage options
 - [x] support looking at request ip behind proxy (aka based on x-real-ip)
+- [x] Validate new IP address is actually an IP address
+- [x] determine if foo.com. and foo.com should be treated the same
