@@ -143,6 +143,9 @@ ExecStart=/usr/local/bin/unbound_ddns /etc/unbound_ddns/config.toml
 Restart=on-failure
 RestartSec=5s
 
+# Log level: error, warn, info, debug, trace (default: info)
+Environment=RUST_LOG=info
+
 # Security hardening
 NoNewPrivileges=true
 PrivateTmp=true

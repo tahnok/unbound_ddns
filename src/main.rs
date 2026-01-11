@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
 use subtle::ConstantTimeEq;
+use tracing::{error, info, warn};
 
 /// Normalizes a domain name by removing the trailing dot if present.
 ///
@@ -207,10 +208,13 @@ async fn update_handler(
     headers: HeaderMap,
     body: Bytes,
 ) -> UpdateResponse {
+    let client_ip = extract_client_ip(&headers, &addr);
+
     // Extract and validate Authorization header
     let auth_key = match extract_auth_key(&headers) {
         Ok(key) => key,
         Err(e) => {
+            warn!(client_ip = %client_ip, reason = %e, "Request failed");
             return UpdateResponse {
                 success: false,
                 message: e,
@@ -222,6 +226,7 @@ async fn update_handler(
     let mut payload = match parse_update_request(&headers, &body) {
         Ok(p) => p,
         Err(e) => {
+            warn!(client_ip = %client_ip, reason = "parse error", error = %e, "Request failed");
             return UpdateResponse {
                 success: false,
                 message: format!("Failed to parse request: {}", e),
@@ -232,6 +237,8 @@ async fn update_handler(
     // Normalize the domain name by removing trailing dot
     payload.domain = normalize_domain(&payload.domain);
 
+    info!(client_ip = %client_ip, domain = %payload.domain, "Received update request");
+
     // Authenticate the request - use same error message for both invalid domain and invalid key
     // to prevent leaking information about which domains are valid
     const UNAUTHORIZED_ERROR: &str = "Unauthorized";
@@ -239,6 +246,7 @@ async fn update_handler(
     let domain_config = match config.find_domain(&payload.domain) {
         Some(d) => d,
         None => {
+            warn!(client_ip = %client_ip, domain = %payload.domain, reason = "unknown domain", "Request failed");
             return UpdateResponse {
                 success: false,
                 message: UNAUTHORIZED_ERROR.to_string(),
@@ -249,6 +257,7 @@ async fn update_handler(
     // Use constant-time comparison to prevent timing attacks
     // that could be used to guess the key byte-by-byte
     if !bool::from(domain_config.key.as_bytes().ct_eq(auth_key.as_bytes())) {
+        warn!(client_ip = %client_ip, domain = %payload.domain, reason = "invalid key", "Request failed");
         return UpdateResponse {
             success: false,
             message: UNAUTHORIZED_ERROR.to_string(),
@@ -258,11 +267,12 @@ async fn update_handler(
     // Determine the IP address
     let ip = match payload.ip {
         Some(ip) => ip,
-        None => extract_client_ip(&headers, &addr),
+        None => client_ip.clone(),
     };
 
     // Validate the IP address (IPv4 only, as we only support A records, not AAAA)
     if ip.parse::<std::net::Ipv4Addr>().is_err() {
+        warn!(client_ip = %client_ip, domain = %payload.domain, ip = %ip, reason = "invalid IPv4 address", "Request failed");
         return UpdateResponse {
             success: false,
             message: format!("Invalid IPv4 address: {}", ip),
@@ -274,20 +284,29 @@ async fn update_handler(
         Ok(_) => {
             // Reload Unbound
             match reload_unbound() {
-                Ok(_) => UpdateResponse {
-                    success: true,
-                    message: format!("Updated {} to {}", payload.domain, ip),
-                },
-                Err(e) => UpdateResponse {
-                    success: false,
-                    message: format!("Failed to reload Unbound: {}", e),
-                },
+                Ok(_) => {
+                    info!(domain = %payload.domain, ip = %ip, "DNS record updated successfully");
+                    UpdateResponse {
+                        success: true,
+                        message: format!("Updated {} to {}", payload.domain, ip),
+                    }
+                }
+                Err(e) => {
+                    error!(domain = %payload.domain, ip = %ip, error = %e, "Failed to reload Unbound");
+                    UpdateResponse {
+                        success: false,
+                        message: format!("Failed to reload Unbound: {}", e),
+                    }
+                }
             }
         }
-        Err(e) => UpdateResponse {
-            success: false,
-            message: format!("Failed to update configuration: {}", e),
-        },
+        Err(e) => {
+            error!(domain = %payload.domain, ip = %ip, error = %e, "Failed to update configuration");
+            UpdateResponse {
+                success: false,
+                message: format!("Failed to update configuration: {}", e),
+            }
+        }
     }
 }
 
@@ -372,21 +391,31 @@ fn create_app(config: Arc<Config>) -> Router {
 }
 
 fn print_config_info(config: &Config) {
-    println!("Loaded configuration:");
-    println!("  Unbound config path: {:?}", config.unbound_config_path);
-    println!("  Authorized domains: {}", config.domains.len());
-    for domain in &config.domains {
-        println!("    - {}", domain.name);
-    }
+    let domain_names: Vec<&str> = config.domains.iter().map(|d| d.name.as_str()).collect();
+    info!(
+        unbound_config_path = ?config.unbound_config_path,
+        domain_count = config.domains.len(),
+        domains = ?domain_names,
+        "Loaded configuration"
+    );
 }
 
 #[tokio::main]
 async fn main() {
+    // Initialize tracing subscriber for logging
+    // Log level can be controlled via RUST_LOG env var (e.g., RUST_LOG=info)
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive(tracing::Level::INFO.into()),
+        )
+        .init();
+
     // Load configuration
     let config = match Config::load("config.toml") {
         Ok(config) => Arc::new(config),
         Err(e) => {
-            eprintln!("Error loading configuration: {}", e);
+            error!(error = %e, "Failed to load configuration");
             std::process::exit(1);
         }
     };
@@ -399,7 +428,7 @@ async fn main() {
     // Start the server
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
 
-    println!("\nServer running on http://0.0.0.0:3000");
+    info!(address = "0.0.0.0:3000", "Server started");
 
     axum::serve(
         listener,
