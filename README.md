@@ -139,7 +139,8 @@ Wants=network.target
 [Service]
 Type=simple
 User=root
-ExecStart=/usr/local/bin/unbound_ddns /etc/unbound_ddns/config.toml
+WorkingDirectory=/etc/unbound_ddns
+ExecStart=/usr/local/bin/unbound_ddns
 Restart=on-failure
 RestartSec=5s
 
