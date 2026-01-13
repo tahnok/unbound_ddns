@@ -1,0 +1,17 @@
+# Configuration for unbound_ddns integration test
+
+# Path to the Unbound configuration file to update
+unbound_config_path = "/etc/unbound/unbound.conf"
+
+# Test domains with their secret keys
+[[domains]]
+name = "test.example.com"
+key = "test-secret-key-123"
+
+[[domains]]
+name = "home.example.com"
+key = "home-secret-key-456"
+
+[[domains]]
+name = "auto.example.com"
+key = "auto-secret-key-789"
